@@ -1,6 +1,6 @@
 # NodeWave security notes
 
-Status: **v0.5.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
+Status: **v0.5.0 plus unreleased work (verified contacts, groups), not independently audited.** The design uses only standard, well-reviewed primitives from the
 Java/Android platform (no custom cryptography, no third-party crypto libraries), but nobody outside this project
 has reviewed it. Do not rely on it where lives or liberty depend on it.
 
@@ -15,6 +15,8 @@ has reviewed it. Do not rely on it where lives or liberty depend on it.
 | **Delivery receipts cannot be forged** | ACKs are sealed with the same session |
 | **Neighbour announcements (HELLO) cannot be forged or replayed** | sealed with the session and carry a sequence number that must increase |
 | Relays **cannot read or alter** what they forward | they never hold any key for the traffic they carry |
+| A **verified contact cannot be impersonated** | its full public key was scanned from its QR code in person and is pinned: a handshake under any other key for that node ID is refused, even if someone found a key with the same 64-bit ID |
+| **Group messages** are end-to-end encrypted and authenticated per author | each member gets its own copy sealed with the pairwise session; a copy cannot be forged by another member or by a relay |
 | Chat history and identity key **at rest** | text encrypted with an Android Keystore AES-256-GCM key; private key wrapped by it; `allowBackup=false` |
 
 ## How it works
@@ -52,6 +54,29 @@ has reviewed it. Do not rely on it where lives or liberty depend on it.
 The wire format is documented in `app/src/main/java/com/nodewave/mesh/protocol/Packet.kt`, the handshake in
 `app/src/main/java/com/nodewave/mesh/crypto/SessionManager.kt`.
 
+## Verified contacts
+
+Each phone can show a QR code with its full P-256 public key and name, `nodewave://c/1/<key>/<name>`. Scanning it
+stores the key as **verified** and pins it in the session manager. Verifying is one-way: you confirm the other
+person; they must scan your code to confirm you. The code contains no secret, so showing it to others is safe;
+what matters is that you scan it from the real person's screen. A code whose key is not on the curve, or whose
+node ID collides with a different key already stored, is refused.
+
+## Groups
+
+A group has a random 64-bit ID, a name (24 bytes at most), up to 8 members and one **admin** (its creator).
+There is **no shared group key**: sending to a group means sending one separately sealed copy to every other
+member over the existing pairwise sessions (packet type `GROUP`, plaintext `kind | groupId | body`). So
+every copy is authenticated as coming from its real author, a relay cannot read it, and the forward secrecy and
+rotation of the pairwise sessions apply unchanged. Rules, all enforced by the receiver:
+
+- an **invitation** creates a pending group; messages are shown only after the user accepts, and at most 8
+  invitations can be pending;
+- a message counts only if the group is joined and its (authenticated) sender is in the member list;
+- only the **admin** can change the name or member list; the same record from anyone else is ignored. A node left
+  out of the admin's new list deletes the group;
+- a **leave** notice removes its (authenticated) sender from the list.
+
 ## Known limitations
 
 - **Forward secrecy is best effort on the device.** Keys are zeroed when sessions end, but the JVM may leave
@@ -64,13 +89,18 @@ The wire format is documented in `app/src/main/java/com/nodewave/mesh/protocol/P
 - **Node IDs are 64 bits.** To impersonate a specific node an attacker must find a different key pair whose hash
   starts with the same 8 bytes, roughly 2^64 work: out of reach for casual attackers, not for a well-funded one.
   For high-stakes conversations, compare node IDs out of band (the app shows the full ID, grouped by four digits).
-- **First contact is trusted.** The ID-to-key binding stops key substitution for an ID you already know, but
-  nothing proves that an ID belongs to the person you think it does until you compare it.
+- **First contact is trusted until you scan the contact's QR code.** The ID-to-key binding stops key
+  substitution for an ID you already know, but nothing proves that an ID belongs to the person you think it does
+  until you verify it in person.
 - **Stealing the long-term key allows impersonation from then on**, not decrypting the past. There is no
   revocation: if a phone is lost, its node ID stays valid for anyone who holds the key.
 - **A session cannot be started to a node that is unreachable**, and the first message to a node (or after a peer
   restarted) takes a round trip longer. Denial of service by a nearby attacker (jamming, flooding with valid-looking
   handshakes, which are rate limited) is not prevented.
+- **Groups trust their admin and their members.** Any member sees the whole member list and every message sent
+  while it is a member; a removed member keeps what it already received. A malicious member can send different
+  texts to different members (copies are not cross-checked), and a malicious admin can add anyone. Messages are
+  not stored for members that are out of reach, and there is no common ordering of messages.
 - **A compromised phone** (malware, unlocked device, root) exposes everything the app can read.
 - **Release builds are debug-signed** for now; verify what you install.
 

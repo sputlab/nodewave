@@ -1,10 +1,13 @@
 package com.nodewave.mesh.protocol
 
+import com.nodewave.mesh.crypto.ContactCode
 import com.nodewave.mesh.crypto.LocalIdentity
 import com.nodewave.mesh.crypto.Sealed
 import com.nodewave.mesh.crypto.Session
 import com.nodewave.mesh.crypto.SessionManager
+import com.nodewave.mesh.data.GroupStore
 import com.nodewave.mesh.data.MessageStore
+import com.nodewave.mesh.data.NoGroupStore
 import com.nodewave.mesh.data.PeerKeyStore
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshLog
@@ -29,6 +32,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
 import java.nio.ByteBuffer
 import kotlin.random.Random
 
@@ -61,13 +65,15 @@ class MeshMessenger(
     /** Where handshake crypto (ECDSA, ECDH) runs; tests pass a deterministic dispatcher. */
     private val cryptoDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val sessions: SessionManager = SessionManager(identity, clock)
+    private val sessions: SessionManager = SessionManager(identity, clock),
+    private val groupStore: GroupStore = NoGroupStore
 ) {
     companion object {
         const val PING_TEXT = "CIAO - 73"
         /** Largest plaintext: header (24) + sealing overhead (32) + text must fit a 244-byte ATT payload. */
         const val MAX_TEXT_BYTES = 180
         private const val MAX_HISTORY = 500
+        private const val MAX_PENDING_INVITES = 8
         private const val MAX_SEEN = 1024
         /**
          * A relay forwards a given packet at most once per this window, which stops floods echoing around a loop.
@@ -111,6 +117,33 @@ class MeshMessenger(
     private val _keyedPeers = MutableStateFlow<Set<String>>(emptySet())
     val keyedPeers: StateFlow<Set<String>> = _keyedPeers.asStateFlow()
 
+    /** Nodes whose identity key the user verified in person by scanning their QR code. */
+    private val _verifiedPeers = MutableStateFlow<Set<String>>(emptySet())
+    val verifiedPeers: StateFlow<Set<String>> = _verifiedPeers.asStateFlow()
+
+    sealed interface VerifyResult {
+        class Verified(val nodeId: String, val name: String) : VerifyResult
+        /** The code is our own. */
+        object OwnCode : VerifyResult
+        /** We already hold a different key for that node ID: do not trust either until compared again. */
+        object KeyMismatch : VerifyResult
+    }
+
+    /**
+     * Marks the contact in [code] as verified: its key is stored and pinned, so handshakes with that node
+     * ID are only accepted under exactly that key from now on.
+     */
+    suspend fun verifyContact(code: ContactCode): VerifyResult {
+        if (code.nodeId == localNodeId) return VerifyResult.OwnCode
+        val known = peerKeys.get(code.nodeId)
+        if (known != null && !known.contentEquals(code.publicKey)) return VerifyResult.KeyMismatch
+        peerKeys.markVerified(code.nodeId, code.publicKey, code.name)
+        sessions.pin(code.nodeId, code.publicKey)
+        _verifiedPeers.update { it + code.nodeId }
+        MeshLog.d("Contact ${code.name} [${code.nodeId.take(6)}] verified in person")
+        return VerifyResult.Verified(code.nodeId, code.name)
+    }
+
     /** Direct peers plus nodes reachable through a currently visible neighbour. */
     val nodes: StateFlow<List<NodeEntry>> = combine(transport.discoveredPeers, _routes) { direct, routes ->
         val directIds = direct.map { it.id }.toSet()
@@ -140,6 +173,8 @@ class MeshMessenger(
     private sealed interface StoreOp {
         class Upsert(val message: ChatMessage) : StoreOp
         object Clear : StoreOp
+        class SaveGroup(val group: Group) : StoreOp
+        class DeleteGroup(val id: String) : StoreOp
     }
     private val storeOps = Channel<StoreOp>(Channel.UNLIMITED)
 
@@ -185,6 +220,13 @@ class MeshMessenger(
     // ---------------------------------------------------------------- persistence
 
     private suspend fun restoreState() {
+        runCatching { groupStore.loadAll() }.onSuccess { stored ->
+            _groups.update { live -> stored.filter { s -> live.none { it.id == s.id } } + live }
+        }.onFailure { MeshLog.e("Could not load groups", it) }
+        runCatching { peerKeys.verifiedKeys() }.onSuccess { keys ->
+            keys.forEach { (id, key) -> sessions.pin(id, key) }
+            _verifiedPeers.update { it + keys.keys }
+        }.onFailure { MeshLog.e("Could not load verified contacts", it) }
         val stored = try {
             messageStore.loadRecent(MAX_HISTORY)
         } catch (e: Exception) {
@@ -210,6 +252,8 @@ class MeshMessenger(
                 when (op) {
                     is StoreOp.Upsert -> messageStore.upsert(op.message)
                     StoreOp.Clear -> messageStore.clear()
+                    is StoreOp.SaveGroup -> groupStore.save(op.group)
+                    is StoreOp.DeleteGroup -> groupStore.delete(op.id)
                 }
             } catch (e: Exception) {
                 MeshLog.e("Store write failed", e)
@@ -298,8 +342,16 @@ class MeshMessenger(
 
     // ---------------------------------------------------------------- sending
 
-    private fun send(destId: String, text: String, type: PacketType) {
-        val plain = text.toByteArray(Charsets.UTF_8)
+    private fun send(
+        destId: String,
+        text: String,
+        type: PacketType,
+        /** Bytes to seal when they differ from the text (group traffic wraps the text in a record). */
+        plainBytes: ByteArray? = null,
+        groupId: String? = null,
+        groupSendId: String? = null
+    ) {
+        val plain = plainBytes ?: text.toByteArray(Charsets.UTF_8)
         if (plain.size > MAX_TEXT_BYTES) {
             MeshLog.e("Message rejected: over $MAX_TEXT_BYTES bytes")
             return
@@ -307,25 +359,18 @@ class MeshMessenger(
         val messageId = random.nextInt()
         val message = ChatMessage(
             messageId = messageId, peerId = destId, peerName = nameOf(destId), outgoing = true,
-            text = text, isPing = type == PacketType.PING, status = MessageStatus.SENDING
+            text = text, isPing = type == PacketType.PING, status = MessageStatus.SENDING,
+            groupId = groupId, groupSendId = groupSendId
         )
         append(message)
         scope.launch {
             var attempt = 0
             while (true) {
-                val session = ensureSession(destId)
-                if (session == null) {
+                val result = sealAndDispatch(destId, type, plain, messageId)
+                if (result == null) {
                     setStatus(message.key, MessageStatus.FAILED, onlyFrom = if (attempt == 0) MessageStatus.SENDING else MessageStatus.SENT)
                     return@launch
                 }
-                if (sessions.needsRotation(destId)) {
-                    MeshLog.d("Rotating the session with ${nameOf(destId)}")
-                    requestRotation(destId)
-                }
-                // Sealed afresh on every attempt: the session may have changed in between.
-                val sealed = Sealed.seal(session, plain, Packet.aad(type, localNodeId, destId, messageId))
-                sessions.noteSent(session)
-                val result = dispatch(Packet(type, localNodeId, destId, messageId, sealed), originId = null, expectReply = true)
                 if (attempt == 0) {
                     // An ACK can overtake the end of dispatch(): only move forward from SENDING.
                     setStatus(message.key, if (result.isSuccess) MessageStatus.SENT else MessageStatus.FAILED, onlyFrom = MessageStatus.SENDING)
@@ -340,6 +385,46 @@ class MeshMessenger(
                     return@launch
                 }
                 MeshLog.d("No ACK from ${nameOf(destId)} yet, sending again ($attempt/$MAX_RETRANSMITS)")
+            }
+        }
+    }
+
+    /**
+     * Seals [plain] with the current session to [destId] (running the handshake first if needed, rotating when
+     * due) and hands it to the router. Null if no session could be set up. Sealed afresh on every call because
+     * the session may have changed since the previous attempt.
+     */
+    private suspend fun sealAndDispatch(destId: String, type: PacketType, plain: ByteArray, messageId: Int): Result<Unit>? {
+        val session = ensureSession(destId) ?: return null
+        if (sessions.needsRotation(destId)) {
+            MeshLog.d("Rotating the session with ${nameOf(destId)}")
+            requestRotation(destId)
+        }
+        val sealed = Sealed.seal(session, plain, Packet.aad(type, localNodeId, destId, messageId))
+        sessions.noteSent(session)
+        return dispatch(Packet(type, localNodeId, destId, messageId, sealed), originId = null, expectReply = true)
+    }
+
+    /** Packets with no chat row (group invitations, leaves) that wait for their ACK: `destId:messageId` -> done. */
+    private val controlPending = HashMap<String, CompletableDeferred<Unit>>()
+
+    /** Reliable send without a chat row: sent again like a message until the ACK comes or the tries run out. */
+    private fun sendControl(destId: String, type: PacketType, plain: ByteArray) {
+        val messageId = random.nextInt()
+        val ack = CompletableDeferred<Unit>()
+        val id = "$destId:$messageId"
+        controlPending[id] = ack
+        scope.launch {
+            try {
+                repeat(MAX_RETRANSMITS + 1) { attempt ->
+                    val result = sealAndDispatch(destId, type, plain, messageId)
+                    if (result == null || result.isFailure) return@launch
+                    if (withTimeoutOrNull(RETRANSMIT_AFTER_MS) { ack.await() } != null) return@launch
+                    MeshLog.d("No ACK for $type from ${nameOf(destId)} yet (${attempt + 1}/${MAX_RETRANSMITS + 1})")
+                }
+                MeshLog.e("$type to ${nameOf(destId)} never acknowledged")
+            } finally {
+                controlPending.remove(id)
             }
         }
     }
@@ -397,6 +482,7 @@ class MeshMessenger(
             PacketType.KEY -> if (markSeen(packet)) onKey(packet, linkId)
             PacketType.ACK -> onAck(packet, linkId)
             PacketType.MESSAGE, PacketType.PING -> onMessage(packet, linkId)
+            PacketType.GROUP -> onGroup(packet, linkId)
         }
     }
 
@@ -436,7 +522,8 @@ class MeshMessenger(
             it.outgoing && it.messageId == acked && it.peerId == packet.senderId
         }
         if (target == null) {
-            MeshLog.d("ACK from ${packet.senderId.take(6)} for unknown message $acked")
+            val control = controlPending["${packet.senderId}:$acked"]
+            if (control != null) control.complete(Unit) else MeshLog.d("ACK from ${packet.senderId.take(6)} for unknown message $acked")
         } else {
             MeshLog.d("ACK from ${target.peerName}: message delivered (relays=${packet.hops})")
             setStatus(target.key, MessageStatus.DELIVERED, hops = packet.hops)
@@ -462,6 +549,139 @@ class MeshMessenger(
             MeshLog.d("Duplicate ${packet.uid.take(8)} from ${packet.senderId.take(6)}, re-ACK only")
         }
         scope.launch { sendAck(packet) }
+    }
+
+    // ---------------------------------------------------------------- groups
+
+    private val _groups = MutableStateFlow<List<Group>>(emptyList())
+    val groups: StateFlow<List<Group>> = _groups.asStateFlow()
+
+    private fun putGroup(group: Group) {
+        _groups.update { list -> list.filterNot { it.id == group.id } + group }
+        storeOps.trySend(StoreOp.SaveGroup(group))
+    }
+
+    private fun removeGroup(id: String) {
+        _groups.update { list -> list.filterNot { it.id == id } }
+        storeOps.trySend(StoreOp.DeleteGroup(id))
+    }
+
+    /** Creates a group with us as admin and invites [others]. Null if the name or the member count is not acceptable. */
+    fun createGroup(name: String, others: Set<String>): Group? {
+        val clean = name.filter { !it.isISOControl() }.trim()
+        val members = listOf(localNodeId) + (others - localNodeId).sorted()
+        if (clean.isEmpty() || clean.toByteArray(Charsets.UTF_8).size > GroupCodec.MAX_NAME_BYTES) return null
+        if (members.size !in 2..GroupCodec.MAX_MEMBERS) return null
+        val group = Group(Hex.encode(random.nextBytes(Packet.NODE_ID_BYTES)), clean, localNodeId, members, GroupState.JOINED)
+        putGroup(group)
+        announce(group, members)
+        return group
+    }
+
+    /** Admin only: replaces the member list (the admin stays in) and tells old and new members. */
+    fun updateGroupMembers(groupId: String, others: Set<String>): Boolean {
+        val group = _groups.value.firstOrNull { it.id == groupId } ?: return false
+        if (group.adminId != localNodeId || group.state != GroupState.JOINED) return false
+        val members = listOf(localNodeId) + (others - localNodeId).sorted()
+        if (members.size !in 2..GroupCodec.MAX_MEMBERS) return false
+        val updated = group.copy(members = members)
+        putGroup(updated)
+        announce(updated, (group.members + members).distinct())
+        return true
+    }
+
+    /** Sends a raw group record as it is, bypassing every rule of the public API; for tests of the receiving side. */
+    internal fun sendGroupRecord(destId: String, plain: ByteArray) = sendControl(destId, PacketType.GROUP, plain)
+
+    private fun announce(group: Group, recipients: List<String>) {
+        val plain = GroupCodec.invite(group.id, group.name, group.members)
+        recipients.filter { it != localNodeId }.forEach { sendControl(it, PacketType.GROUP, plain) }
+    }
+
+    /** Joins the group of a pending invitation. */
+    fun acceptInvite(groupId: String) {
+        _groups.value.firstOrNull { it.id == groupId && it.state == GroupState.INVITED }?.let { putGroup(it.copy(state = GroupState.JOINED)) }
+    }
+
+    /** Leaves a group, or declines an invitation, and tells the other members. */
+    fun leaveGroup(groupId: String) {
+        val group = _groups.value.firstOrNull { it.id == groupId } ?: return
+        removeGroup(groupId)
+        val plain = GroupCodec.leave(groupId)
+        group.members.filter { it != localNodeId }.forEach { sendControl(it, PacketType.GROUP, plain) }
+    }
+
+    /** Sends [text] to every other member, each copy sealed for that member; false if we cannot post to the group. */
+    fun sendGroupText(groupId: String, text: String): Boolean {
+        val group = _groups.value.firstOrNull { it.id == groupId && it.state == GroupState.JOINED } ?: return false
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        if (bytes.isEmpty() || bytes.size > GroupCodec.MAX_TEXT_BYTES) return false
+        val plain = GroupCodec.message(groupId, bytes)
+        val sendId = UUID.randomUUID().toString()
+        group.members.filter { it != localNodeId }.forEach {
+            send(it, text, PacketType.GROUP, plainBytes = plain, groupId = groupId, groupSendId = sendId)
+        }
+        return true
+    }
+
+    private fun onGroup(packet: Packet, linkId: String) {
+        val (_, plain) = open(packet) ?: return
+        noteLink(packet, linkId)
+        if (markSeen(packet)) {
+            val decoded = GroupCodec.decode(plain)
+            if (decoded == null) MeshLog.e("GROUP packet from ${packet.senderId.take(6)} dropped: malformed") else handleGroup(packet, decoded)
+        } else {
+            MeshLog.d("Duplicate ${packet.uid.take(8)} from ${packet.senderId.take(6)}, re-ACK only")
+        }
+        scope.launch { sendAck(packet) }
+    }
+
+    /** [packet] was authenticated: its sender really is the author, so group rules can rely on [Packet.senderId]. */
+    private fun handleGroup(packet: Packet, decoded: GroupCodec.Decoded) {
+        val sender = packet.senderId
+        val group = _groups.value.firstOrNull { it.id == decoded.groupId }
+        when (decoded) {
+            is GroupCodec.Decoded.Message -> {
+                if (group == null || group.state != GroupState.JOINED || sender !in group.members) {
+                    MeshLog.e("Group message from ${nameOf(sender)} dropped: not a member of a group we joined")
+                    return
+                }
+                MeshLog.d("RECEIVED group '${group.name}' message from ${nameOf(sender)} relays=${packet.hops}")
+                append(
+                    ChatMessage(
+                        messageId = packet.messageId, peerId = sender, peerName = nameOf(sender), outgoing = false,
+                        text = decoded.text, hops = packet.hops, status = MessageStatus.RECEIVED, groupId = group.id
+                    )
+                )
+            }
+            is GroupCodec.Decoded.Invite -> {
+                if (group != null && sender == group.adminId && localNodeId !in decoded.members) {
+                    MeshLog.d("Removed from group '${group.name}' by ${nameOf(sender)}")
+                    removeGroup(group.id)
+                    return
+                }
+                if (localNodeId !in decoded.members || sender !in decoded.members) return
+                if (group == null) {
+                    if (_groups.value.count { it.state == GroupState.INVITED } >= MAX_PENDING_INVITES) {
+                        MeshLog.e("Invitation from ${nameOf(sender)} dropped: too many pending")
+                        return
+                    }
+                    MeshLog.d("Invited to group '${decoded.name}' by ${nameOf(sender)}")
+                    putGroup(Group(decoded.groupId, decoded.name, sender, decoded.members, GroupState.INVITED))
+                } else if (sender == group.adminId) {
+                    putGroup(group.copy(name = decoded.name, members = decoded.members))
+                } else {
+                    MeshLog.e("Group update from ${nameOf(sender)} ignored: not the admin")
+                }
+            }
+            is GroupCodec.Decoded.Leave -> {
+                if (group != null && sender in group.members) {
+                    MeshLog.d("${nameOf(sender)} left group '${group.name}'")
+                    val rest = group.members - sender
+                    if (rest.size >= 2) putGroup(group.copy(members = rest)) else removeGroup(group.id)
+                }
+            }
+        }
     }
 
     private fun relay(packet: Packet) {

@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val Mono = FontFamily.Monospace
+internal val Mono = FontFamily.Monospace
 
 @Composable
 private fun MainScreen(vm: MainViewModel = viewModel()) {
@@ -96,9 +96,14 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
     val nodes by vm.nodes.collectAsStateWithLifecycle()
     val keyedPeers by vm.keyedPeers.collectAsStateWithLifecycle()
     val ignoreDirect by vm.ignoreDirect.collectAsStateWithLifecycle()
-    val messages by vm.messages.collectAsStateWithLifecycle()
+    val allMessages by vm.messages.collectAsStateWithLifecycle()
+    val messages = remember(allMessages) { allMessages.filter { it.groupId == null } }
     val selectedPeerId by vm.selectedPeerId.collectAsStateWithLifecycle()
     val logLines by vm.logLines.collectAsStateWithLifecycle()
+    val verified by vm.verifiedPeers.collectAsStateWithLifecycle()
+    val groups by vm.groups.collectAsStateWithLifecycle()
+    val selectedGroupId by vm.selectedGroupId.collectAsStateWithLifecycle()
+    var tab by rememberSaveable { mutableStateOf(0) }
 
     // API 31+ -> BLUETOOTH_SCAN/ADVERTISE/CONNECT; API 29-30 -> ACCESS_FINE_LOCATION (see BleTransport).
     val required = BleTransport.requiredPermissions()
@@ -141,83 +146,98 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
             }
         )
 
-        Panel(title = "NODES (${nodes.size})", modifier = Modifier.weight(1.4f)) {
-            Button(
-                onClick = vm::broadcastPing,
-                enabled = nodes.isNotEmpty() && state == TransportState.ACTIVE,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = TacticalAmber)
-            ) { Text("BROADCAST TO ALL (CIAO - 73)", fontFamily = Mono, fontWeight = FontWeight.Bold) }
-            if (nodes.isEmpty()) {
-                Text("No nodes in range…", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
-            }
-            val nodeListState = rememberLazyListState()
-            LaunchedEffect(nodes.size) { nodeListState.scrollToItem(0) }
-            LazyColumn(state = nodeListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                // No item keys: with keys a node inserted above the first visible one scrolls the list under the header.
-                items(nodes) { node ->
-                    PeerRow(
-                        node = node,
-                        selected = node.id == selectedPeerId,
-                        keyed = node.id in keyedPeers,
-                        enabled = state == TransportState.ACTIVE,
-                        onSelect = { vm.selectPeer(node.id) },
-                        onPing = { vm.ping(node.id) }
-                    )
-                }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("RADIO", "CONTACTS", "GROUPS").forEachIndexed { i, label ->
+                OutlinedButton(
+                    onClick = { tab = i }, modifier = Modifier.weight(1f),
+                    border = BorderStroke(if (tab == i) 2.dp else 1.dp, if (tab == i) TacticalGreen else TacticalDim)
+                ) { Text(label, color = if (tab == i) TacticalGreen else TacticalDim, fontFamily = Mono, fontSize = 11.sp) }
             }
         }
-
-        Panel(
-            title = "CHAT (${messages.size})",
-            modifier = Modifier.weight(1.3f),
-            action = {
-                TextButton(onClick = vm::clearHistory, enabled = messages.isNotEmpty(), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text("CLEAR", color = TacticalDim, fontFamily = Mono, fontSize = 11.sp)
+        when (tab) {
+            1 -> ContactsTab(vm, nodes, verified, Modifier.weight(1f))
+            2 -> GroupsTab(vm, groups, nodes, allMessages, selectedGroupId, state == TransportState.ACTIVE, Modifier.weight(1f))
+            else -> {
+            Panel(title = "NODES (${nodes.size})", modifier = Modifier.weight(1.4f)) {
+                Button(
+                    onClick = vm::broadcastPing,
+                    enabled = nodes.isNotEmpty() && state == TransportState.ACTIVE,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = TacticalAmber)
+                ) { Text("BROADCAST TO ALL (CIAO - 73)", fontFamily = Mono, fontWeight = FontWeight.Bold) }
+                if (nodes.isEmpty()) {
+                    Text("No nodes in range…", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
+                }
+                val nodeListState = rememberLazyListState()
+                LaunchedEffect(nodes.size) { nodeListState.scrollToItem(0) }
+                LazyColumn(state = nodeListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // No item keys: with keys a node inserted above the first visible one scrolls the list under the header.
+                    items(nodes) { node ->
+                        PeerRow(
+                            node = node,
+                            selected = node.id == selectedPeerId,
+                            keyed = node.id in keyedPeers,
+                                verified = node.id in verified,
+                            enabled = state == TransportState.ACTIVE,
+                            onSelect = { vm.selectPeer(node.id) },
+                            onPing = { vm.ping(node.id) }
+                        )
+                    }
                 }
             }
-        ) {
-            val listState = rememberLazyListState()
-            LaunchedEffect(messages.size) {
-                if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
-            }
-            LazyColumn(state = listState, modifier = Modifier.weight(1f, fill = false)) {
-                items(messages, key = { it.key }) { m -> MessageLine(m) }
-            }
-            ChatInput(
-                targetName = nodes.firstOrNull { it.id == selectedPeerId }?.name,
-                enabled = state == TransportState.ACTIVE,
-                onSend = vm::sendText,
-                onBroadcast = vm::broadcastText
-            )
-        }
 
-        Panel(
-            title = "CONSOLE MESH_RADIO",
-            modifier = Modifier.weight(0.8f),
-            action = {
-                Text(
-                    "DEBUG: skip direct link",
-                    color = if (ignoreDirect) TacticalAmber else TacticalDim, fontFamily = Mono, fontSize = 10.sp
-                )
-                Switch(
-                    checked = ignoreDirect, onCheckedChange = vm::setIgnoreDirect,
-                    modifier = Modifier.scale(0.7f)
+            Panel(
+                title = "CHAT (${messages.size})",
+                modifier = Modifier.weight(1.3f),
+                action = {
+                    TextButton(onClick = vm::clearHistory, enabled = messages.isNotEmpty(), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                        Text("CLEAR", color = TacticalDim, fontFamily = Mono, fontSize = 11.sp)
+                    }
+                }
+            ) {
+                val listState = rememberLazyListState()
+                LaunchedEffect(messages.size) {
+                    if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+                }
+                LazyColumn(state = listState, modifier = Modifier.weight(1f, fill = false)) {
+                    items(messages, key = { it.key }) { m -> MessageLine(m) }
+                }
+                ChatInput(
+                    targetName = nodes.firstOrNull { it.id == selectedPeerId }?.name,
+                    enabled = state == TransportState.ACTIVE,
+                    onSend = vm::sendText,
+                    onBroadcast = vm::broadcastText
                 )
             }
-        ) {
-            val listState = rememberLazyListState()
-            LaunchedEffect(logLines.size) {
-                if (logLines.isNotEmpty()) listState.scrollToItem(logLines.lastIndex)
-            }
-            LazyColumn(state = listState) {
-                items(logLines) { line ->
+
+            Panel(
+                title = "CONSOLE MESH_RADIO",
+                modifier = Modifier.weight(0.8f),
+                action = {
                     Text(
-                        line,
-                        color = if (line.contains(" E ")) TacticalRed else TacticalDim,
-                        fontFamily = Mono, fontSize = 10.sp, lineHeight = 12.sp
+                        "DEBUG: skip direct link",
+                        color = if (ignoreDirect) TacticalAmber else TacticalDim, fontFamily = Mono, fontSize = 10.sp
+                    )
+                    Switch(
+                        checked = ignoreDirect, onCheckedChange = vm::setIgnoreDirect,
+                        modifier = Modifier.scale(0.7f)
                     )
                 }
+            ) {
+                val listState = rememberLazyListState()
+                LaunchedEffect(logLines.size) {
+                    if (logLines.isNotEmpty()) listState.scrollToItem(logLines.lastIndex)
+                }
+                LazyColumn(state = listState) {
+                    items(logLines) { line ->
+                        Text(
+                            line,
+                            color = if (line.contains(" E ")) TacticalRed else TacticalDim,
+                            fontFamily = Mono, fontSize = 10.sp, lineHeight = 12.sp
+                        )
+                    }
+                }
+            }
             }
         }
     }
@@ -252,7 +272,7 @@ private fun Header(nodeName: String, nodeId: String, state: TransportState, acti
 }
 
 @Composable
-private fun PeerRow(node: NodeEntry, selected: Boolean, keyed: Boolean, enabled: Boolean, onSelect: () -> Unit, onPing: () -> Unit) {
+private fun PeerRow(node: NodeEntry, selected: Boolean, keyed: Boolean, verified: Boolean, enabled: Boolean, onSelect: () -> Unit, onPing: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -272,6 +292,7 @@ private fun PeerRow(node: NodeEntry, selected: Boolean, keyed: Boolean, enabled:
                     Text("via ${node.viaName ?: node.viaId?.take(6)}", color = TacticalGreen, fontFamily = Mono, fontSize = 12.sp)
                 }
                 if (keyed) Text("  E2E key", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
+                if (verified) Text("  VERIFIED", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
         OutlinedButton(onClick = onPing, enabled = enabled, border = BorderStroke(1.dp, TacticalGreen)) {
@@ -340,7 +361,7 @@ private fun ChatInput(targetName: String?, enabled: Boolean, onSend: (String) ->
 }
 
 @Composable
-private fun Panel(
+internal fun Panel(
     title: String,
     modifier: Modifier = Modifier,
     action: (@Composable () -> Unit)? = null,

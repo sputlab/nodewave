@@ -6,6 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 ## [Unreleased]
 
 ### Changed
+- **Watchdog.** In the field a Mi Note 10 stayed deaf to scans for two hours while the radio was reopened eleven times, and a Honor and a Sony lost their scans too. Restarting only the scan never helped, so the watchdog now reopens the radio at the first silence (90 s) and, if that did not help twice, stops and starts the whole transport, which is what doing it by hand does (verified on the Mi: stop, IDLE, STARTING, ACTIVE in 2 s at 361 s). Its log line gives the scan callbacks in the window.
 - New app icon (adaptive, with a monochrome variant for themed icons), also used in the README and as F-Droid listing metadata (`fastlane/metadata/android/en-US/images/icon.png`).
 
 ### Added

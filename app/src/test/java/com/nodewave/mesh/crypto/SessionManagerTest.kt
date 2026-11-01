@@ -40,6 +40,34 @@ class SessionManagerTest {
 
     private val aad = byteArrayOf(9, 8, 7)
 
+    // ------------------------------------------------------------ verified contacts
+
+    @Test
+    fun aPinnedKeyIsAcceptedAndAnyOtherKeyForThatNodeIdIsRejected() {
+        val a = peer(); val b = peer(); val other = LocalIdentity.generate()
+        a.sm.pin(b.id, b.identity.publicKey)
+        // b's own key matches the pin, so the handshake works
+        val request = b.sm.beginHandshake(a.id)
+        assertTrue(a.sm.onKey(b.id, request) is SessionManager.KeyOutcome.Reply)
+
+        // the user verified a different key for that node ID (as if two keys shared the 64-bit ID)
+        val c = peer()
+        c.sm.pin(b.id, other.publicKey)
+        val rejected = c.sm.onKey(b.id, b.sm.beginHandshake(c.id))
+        assertTrue(rejected is SessionManager.KeyOutcome.Rejected)
+        assertEquals("identity key differs from the one verified in person", (rejected as SessionManager.KeyOutcome.Rejected).reason)
+    }
+
+    @Test
+    fun aPinnedKeyAlsoGuardsTheResponse() {
+        val a = peer(); val b = peer()
+        val request = a.sm.beginHandshake(b.id)
+        val reply = b.sm.onKey(a.id, request) as SessionManager.KeyOutcome.Reply
+        a.sm.pin(b.id, LocalIdentity.generate().publicKey) // pinned after the request left
+        assertTrue(a.sm.onKey(b.id, reply.payload) is SessionManager.KeyOutcome.Rejected)
+        assertNull(a.sm.sendSession(b.id))
+    }
+
     // ------------------------------------------------------------ handshake
 
     @Test

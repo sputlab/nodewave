@@ -11,7 +11,10 @@ enum class PacketType(val code: Int) {
     HELLO(4),
 
     /** Authenticated ephemeral key exchange, routed like a message; payload is a [com.nodewave.mesh.crypto.HandshakeMessage]. */
-    KEY(5);
+    KEY(5),
+
+    /** Group chat traffic (message, invitation, leave); sealed plaintext is a [GroupCodec] record. */
+    GROUP(6);
 
     companion object {
         fun fromCode(code: Int): PacketType? = entries.firstOrNull { it.code == code }

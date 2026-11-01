@@ -3,7 +3,10 @@ package com.nodewave.mesh
 import android.app.Application
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
+import com.nodewave.mesh.crypto.ContactCode
 import com.nodewave.mesh.protocol.ChatMessage
+import com.nodewave.mesh.protocol.Group
+import com.nodewave.mesh.protocol.MeshMessenger
 import com.nodewave.mesh.protocol.NodeEntry
 import com.nodewave.mesh.transport.MeshLog
 import com.nodewave.mesh.transport.TransportState
@@ -25,7 +28,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val keyedPeers: StateFlow<Set<String>> = messenger.keyedPeers
     val ignoreDirect: StateFlow<Boolean> = messenger.ignoreDirect
     val messages: StateFlow<List<ChatMessage>> = messenger.messages
+    val verifiedPeers: StateFlow<Set<String>> = messenger.verifiedPeers
+    val groups: StateFlow<List<Group>> = messenger.groups
     val logLines: StateFlow<List<String>> = MeshLog.lines
+
+    private val _selectedGroupId = MutableStateFlow<String?>(null)
+    val selectedGroupId: StateFlow<String?> = _selectedGroupId.asStateFlow()
 
     private val _selectedPeerId = MutableStateFlow<String?>(null)
     val selectedPeerId: StateFlow<String?> = _selectedPeerId.asStateFlow()
@@ -62,4 +70,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearHistory() = messenger.clearHistory()
+
+    // ---- contacts
+
+    /** The text of this node's contact QR code. */
+    fun contactCodeText(): String = ContactCode(engine.identity.publicKey, localNodeName).encode()
+
+    /** Verifies the contact in a scanned QR [text]; returns what to tell the user. */
+    suspend fun verifyContact(text: String): String {
+        val code = ContactCode.decode(text) ?: return "Not a NodeWave contact code"
+        return when (val r = messenger.verifyContact(code)) {
+            is MeshMessenger.VerifyResult.Verified -> "Verified: ${r.name} [${r.nodeId.take(6)}]"
+            MeshMessenger.VerifyResult.OwnCode -> "That is your own code"
+            MeshMessenger.VerifyResult.KeyMismatch -> "WARNING: ${code.name} [${code.nodeId.take(6)}] uses a different key than the one we already know. Do not trust it."
+        }
+    }
+
+    // ---- groups
+
+    fun nameOf(nodeId: String): String = nodes.value.firstOrNull { it.id == nodeId }?.name ?: nodeId.take(6)
+
+    fun selectGroup(groupId: String) {
+        _selectedGroupId.value = if (_selectedGroupId.value == groupId) null else groupId
+    }
+
+    fun createGroup(name: String, members: Set<String>): Boolean =
+        messenger.createGroup(name, members)?.also { _selectedGroupId.value = it.id } != null
+
+    fun updateGroupMembers(groupId: String, members: Set<String>) = messenger.updateGroupMembers(groupId, members)
+    fun acceptInvite(groupId: String) = messenger.acceptInvite(groupId)
+
+    fun leaveGroup(groupId: String) {
+        if (_selectedGroupId.value == groupId) _selectedGroupId.value = null
+        messenger.leaveGroup(groupId)
+    }
+
+    fun sendGroupText(groupId: String, text: String) = text.trim().takeIf { it.isNotEmpty() }?.let { messenger.sendGroupText(groupId, it) } ?: false
 }

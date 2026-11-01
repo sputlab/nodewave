@@ -1,5 +1,6 @@
 package com.nodewave.mesh.protocol
 
+import com.nodewave.mesh.crypto.ContactCode
 import com.nodewave.mesh.crypto.Crypto
 import com.nodewave.mesh.crypto.HandshakeMessage
 import com.nodewave.mesh.crypto.LocalIdentity
@@ -22,6 +23,54 @@ import java.nio.ByteBuffer
 class MeshNetworkTest {
 
     private fun sidOf(p: Packet) = Sealed.sidOf(p.payload)
+
+    // ------------------------------------------------------------ verified contacts
+
+    @Test
+    fun verifyingAContactStoresAndPinsItsKeyAndTrafficStillFlows() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+
+        val result = a.messenger.verifyContact(ContactCode(b.identity.publicKey, "Bee"))
+        assertTrue(result is MeshMessenger.VerifyResult.Verified)
+        assertEquals(setOf(b.id), a.messenger.verifiedPeers.value)
+        assertEquals(setOf(b.id), a.keys.verified.keys)
+
+        a.messenger.sendText(b.id, "hello verified")
+        settle()
+        assertEquals("hello verified", b.received().single().text)
+    }
+
+    @Test
+    fun ownCodeAndConflictingKeysAreNotAccepted() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net)
+
+        assertTrue(a.messenger.verifyContact(ContactCode(a.identity.publicKey, "me")) is MeshMessenger.VerifyResult.OwnCode)
+
+        a.keys.keys[b.id] = LocalIdentity.generate().publicKey // a already holds another key for that ID
+        assertTrue(a.messenger.verifyContact(ContactCode(b.identity.publicKey, "Bee")) is MeshMessenger.VerifyResult.KeyMismatch)
+        assertTrue(a.messenger.verifiedPeers.value.isEmpty())
+    }
+
+    @Test
+    fun aVerifiedKeyIsStillEnforcedAfterARestart() = runTest {
+        val net = network()
+        val keys = InMemoryPeerKeyStore()
+        // the user once verified a different key for b's node ID; the pin must come back from storage
+        val b = node(net)
+        keys.verified[b.id] = LocalIdentity.generate().publicKey
+        val a = node(net, keys = keys)
+        net.link(a.id, b.id)
+        settle()
+
+        a.messenger.sendText(b.id, "should not get through")
+        settle()
+
+        assertTrue(b.received().isEmpty())
+        assertNull(a.sent().singleOrNull { it.status == MessageStatus.DELIVERED })
+    }
 
     // ------------------------------------------------------------ delivery and relay
 

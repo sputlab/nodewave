@@ -110,9 +110,10 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         private const val STATS_INTERVAL_MS = 30_000L
         /**
          * Some phones (an Honor View 10 and a Mi Note 10 were seen) silently lose scanning while the app still
-         * believes the radio is on. If nothing is heard for this long the scan is restarted; if that did not
-         * help the whole radio (GATT server, advertising, scan) is reopened, which is what stopping and
-         * starting the radio by hand does and was the only thing that cured the Mi. The wait doubles after
+         * believes the radio is on. If nothing is heard for this long the whole radio (GATT server, advertising,
+         * scan) is reopened; if that did not help twice the transport is stopped and started again, which is
+         * what doing it by hand does and was the only thing that cured a Mi Note 10 that stayed deaf for two
+         * hours through eleven reopenings. Restarting only the scan never helped. The wait doubles after
          * each fruitless restart (up to [MAX_SCAN_SILENCE_MS]) so a node that is simply alone stays quiet,
          * and nothing is restarted while a link is open or a packet arrived recently.
          */
@@ -166,6 +167,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     private var watchdogJob: Job? = null
     @Volatile private var lastScanResultAt = SystemClock.elapsedRealtime()
     @Volatile private var fruitlessScanRestarts = 0
+    private var rawAtLastCheck = 0
     /** Last time anything arrived over a link (a write to our server or a notification), as a sign the radio works. */
     @Volatile private var lastInboundAt = 0L
     @Volatile private var advertisedName = ""
@@ -684,15 +686,27 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                     if (busy) {
                         lastScanResultAt = now // it works for them, let the clock start again
                     } else {
-                        val full = fruitlessScanRestarts > 0
-                        MeshLog.d("WATCHDOG: nothing heard for ${(now - lastScanResultAt) / 1000}s (scan callbacks=${stats.scanRaw.get()}, without node info=${stats.scanDropped.get()}, peers=${_peers.value.size}), " + if (full) "reopening the radio" else "restarting the scan")
+                        // Restarting only the scan never cured a dead scanner on the phones that showed it, so
+                        // the first step reopens the radio; if that did not help twice, cycle the whole transport.
+                        val cycle = fruitlessScanRestarts >= 2
+                        val raw = stats.scanRaw.get()
+                        MeshLog.d(
+                            "WATCHDOG: nothing heard for ${(now - lastScanResultAt) / 1000}s " +
+                                "(scan callbacks in this window=${raw - rawAtLastCheck}, without node info=${stats.scanDropped.get()}, " +
+                                "peers=${_peers.value.size}), " + if (cycle) "stopping and starting the transport" else "reopening the radio"
+                        )
+                        rawAtLastCheck = raw
                         stats.watchdogRestarts.incrementAndGet()
                         fruitlessScanRestarts++
                         lastScanResultAt = now
-                        lifecycleMutex.withLock {
-                            if (_state.value == TransportState.ACTIVE) {
-                                runCatching { if (full) reopenRadio() else restartScan() }
-                                    .onFailure { MeshLog.e("Radio restart failed", it) }
+                        if (cycle) {
+                            // stop() cancels this very job, so the cycle runs on its own coroutine
+                            scope.launch { cycleTransport() }
+                        } else {
+                            lifecycleMutex.withLock {
+                                if (_state.value == TransportState.ACTIVE) {
+                                    runCatching { reopenRadio() }.onFailure { MeshLog.e("Radio restart failed", it) }
+                                }
                             }
                         }
                     }
@@ -707,12 +721,12 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         }
     }
 
-    private suspend fun restartScan() {
-        val adapter = bluetoothManager?.adapter ?: return
-        scanJob?.cancel() // awaitClose stops the scanner
-        scanJob = null
-        delay(RESTART_PAUSE_MS)
-        startScanJob(adapter)
+    /** What stopping and starting the radio by hand does; the messenger drops its sessions when the state turns IDLE. */
+    private suspend fun cycleTransport() {
+        val name = advertisedName
+        stop()
+        delay(RESTART_PAUSE_MS * 4)
+        start(name).onFailure { MeshLog.e("Transport restart failed", it) }
     }
 
     /** Closes and reopens GATT server, advertising and scan, keeping the peer table and the state. */

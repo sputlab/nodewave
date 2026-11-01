@@ -13,6 +13,8 @@ Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over
 - End-to-end encryption with **forward secrecy**: a signed ephemeral ECDH handshake (P-256, ECDSA, HKDF-SHA256) gives each pair of nodes AES-256-GCM session keys that live in memory only and are replaced every hour or 500 messages. Relays and eavesdroppers cannot read or alter messages, delivery receipts and neighbour announcements (HELLO) cannot be forged or replayed. See [docs/SECURITY.md](docs/SECURITY.md).
 - Foreground service: the radio keeps working with the screen off or the app closed (notification with a *Stop radio* action).
 - Reliable links: replies travel back on the connection that carried the request (GATT notifications), so a direct exchange needs one connection instead of several; unacknowledged messages are sent again; a watchdog restarts a scan or advertisement that silently died.
+- **Verified contacts:** scan someone's QR code in person to confirm who a node ID belongs to; its key is then pinned.
+- **Group chat** for up to 8 people, end-to-end encrypted per member (no shared group key), with an admin who manages the member list.
 - Persistent chat history (message text encrypted at rest with the Android Keystore) with a CLEAR button.
 - Live list of nodes: direct ones with signal strength (RSSI, dBm), indirect ones as `via <neighbour>`.
 - Multi-hop relay with TTL and duplicate suppression; delivery ACKs travel back across the relays.

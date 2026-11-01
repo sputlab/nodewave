@@ -15,5 +15,8 @@ data class ChatMessage(
     /** Relays crossed: on received messages, by the message; on delivered ones, by the ACK. */
     val hops: Int = 0,
     val time: Long = System.currentTimeMillis(),
-    val status: MessageStatus
+    val status: MessageStatus,
+    /** Set on group traffic. A sent group message is one row per member, all sharing [groupSendId]. */
+    val groupId: String? = null,
+    val groupSendId: String? = null
 )

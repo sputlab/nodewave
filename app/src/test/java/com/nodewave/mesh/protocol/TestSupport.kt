@@ -2,6 +2,7 @@ package com.nodewave.mesh.protocol
 
 import com.nodewave.mesh.crypto.LocalIdentity
 import com.nodewave.mesh.data.MessageStore
+import com.nodewave.mesh.data.GroupStore
 import com.nodewave.mesh.data.PeerKeyStore
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshTransport
@@ -130,11 +131,23 @@ internal class InMemoryMessageStore : MessageStore {
     override suspend fun clear() { rows.clear() }
 }
 
+internal class InMemoryGroupStore : GroupStore {
+    val groups = LinkedHashMap<String, Group>()
+    override suspend fun loadAll() = groups.values.toList()
+    override suspend fun save(group: Group) { groups[group.id] = group }
+    override suspend fun delete(groupId: String) { groups.remove(groupId) }
+}
+
 internal class InMemoryPeerKeyStore : PeerKeyStore {
     val keys = LinkedHashMap<String, ByteArray>()
+    val verified = LinkedHashMap<String, ByteArray>()
     override suspend fun get(nodeId: String) = keys[nodeId]
     override suspend fun put(nodeId: String, publicKey: ByteArray) { keys.putIfAbsent(nodeId, publicKey) }
     override suspend fun knownNodeIds() = keys.keys.toSet()
+    override suspend fun markVerified(nodeId: String, publicKey: ByteArray, name: String) {
+        keys[nodeId] = publicKey; verified[nodeId] = publicKey
+    }
+    override suspend fun verifiedKeys(): Map<String, ByteArray> = verified.toMap()
 }
 
 internal class TestNode(
@@ -142,7 +155,8 @@ internal class TestNode(
     val messenger: MeshMessenger,
     val transport: FakeNetwork.FakeTransport,
     val store: InMemoryMessageStore,
-    val keys: InMemoryPeerKeyStore
+    val keys: InMemoryPeerKeyStore,
+    val groupStore: InMemoryGroupStore = InMemoryGroupStore()
 ) {
     val id: String get() = identity.nodeId
     fun received() = messenger.messages.value.filter { !it.outgoing }
@@ -164,6 +178,7 @@ internal fun TestScope.node(
     identity: LocalIdentity = LocalIdentity.generate(),
     store: InMemoryMessageStore = InMemoryMessageStore(),
     keys: InMemoryPeerKeyStore = InMemoryPeerKeyStore(),
+    groupStore: InMemoryGroupStore = InMemoryGroupStore(),
     /** Defaults to a fixed seed per node created, so timings (hello jitter, who starts a handshake) repeat. */
     random: Random? = null
 ): TestNode {
@@ -172,9 +187,10 @@ internal fun TestScope.node(
         transport, identity, backgroundScope as CoroutineScope, store, keys,
         random ?: Random(7919L * (++net.nodesCreated)),
         cryptoDispatcher = StandardTestDispatcher(testScheduler),
-        clock = { testScheduler.currentTime }
+        clock = { testScheduler.currentTime },
+        groupStore = groupStore
     )
-    return TestNode(identity, messenger, transport, store, keys)
+    return TestNode(identity, messenger, transport, store, keys, groupStore)
 }
 
 /** Lets queued sends/relays/ACKs run, but stays below the 2 s tick of the HELLO loop. */

@@ -88,6 +88,13 @@ class SessionManager(
     private class Pending(val ephPrivate: PrivateKey, val ephPublic: ByteArray, val createdAt: Long)
 
     private val localId = identity.nodeId
+    private val pinned = HashMap<String, ByteArray>()
+
+    /** From now on only [identityKey] is accepted for [nodeId]: the key the user verified in person (QR code). */
+    @Synchronized
+    fun pin(nodeId: String, identityKey: ByteArray) {
+        pinned[nodeId] = identityKey
+    }
     private val pending = HashMap<String, MutableList<Pending>>()
     private val sessions = HashMap<String, MutableList<Session>>()
     private val lastAccepted = HashMap<String, Long>()
@@ -109,6 +116,9 @@ class SessionManager(
     fun onKey(senderId: String, payload: ByteArray): KeyOutcome {
         val msg = HandshakeMessage.decode(payload) ?: return KeyOutcome.Rejected("malformed")
         if (Crypto.nodeIdOf(msg.identityKey) != senderId) return KeyOutcome.Rejected("identity key does not match the node ID")
+        pinned[senderId]?.let {
+            if (!it.contentEquals(msg.identityKey)) return KeyOutcome.Rejected("identity key differs from the one verified in person")
+        }
         val identityPub = Crypto.decodePublic(msg.identityKey) ?: return KeyOutcome.Rejected("invalid identity key")
         if (Crypto.decodePublic(msg.ephemeralKey) == null) return KeyOutcome.Rejected("invalid ephemeral key")
         return if (msg.isRequest) onRequest(senderId, msg, identityPub) else onResponse(senderId, msg, identityPub)

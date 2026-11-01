@@ -6,6 +6,10 @@
         android:name="android.hardware.bluetooth_le"
         android:required="true" />
 
+    <!-- Only for scanning a contact's QR code; the app works without a camera. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- API 29-30: legacy Bluetooth + location (required for BLE scan results) -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
