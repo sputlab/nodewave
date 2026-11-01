@@ -5,16 +5,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-01
+
+Verified contacts, group chat and a radio watchdog that recovers a deaf scanner.
+
+### Added
+- **Verified contacts.** Each phone shows a QR code with its full public key and name; scanning someone's code (CameraX + ZXing, both Apache-2.0, no Google services) marks the node as verified and pins its key, so a handshake under any other key for that node ID is refused, even one found by brute-forcing the 64-bit ID. Verified nodes are marked in the node list. New `CAMERA` permission, asked only when scanning, and the camera is not required to install the app.
+- **Group chat** for up to 8 members with one admin: create, invite, accept or decline, change members, leave, and chat. A message is sent as one separately sealed copy per member over the existing pairwise sessions, with ACKs and resends: no group key, no new cryptography, forward secrecy of the pairwise sessions kept. Receivers enforce the rules (joined group, sender is a member, only the admin changes the list). Groups and their history are stored on the device (database version 3). Wire: new packet type `GROUP`; the header is unchanged and older nodes drop it.
+- A test interface with three tabs: RADIO (the previous screen), CONTACTS (your code, scanner, who is verified) and GROUPS.
+- Scan diagnostics: the watchdog message reports the scan callbacks in its window, and `LINKSTATS` counts raw scan callbacks and those without NodeWave data.
+- 173 unit tests (new: contact code, pinned keys including after a restart, group codec, the whole group lifecycle and every group rule). Each security test was checked by breaking the rule it covers.
+
 ### Changed
 - **Watchdog.** In the field a Mi Note 10 stayed deaf to scans for two hours while the radio was reopened eleven times, and a Honor and a Sony lost their scans too. Restarting only the scan never helped, so the watchdog now reopens the radio at the first silence (90 s) and, if that did not help twice, stops and starts the whole transport, which is what doing it by hand does (verified on the Mi: stop, IDLE, STARTING, ACTIVE in 2 s at 361 s). Its log line gives the scan callbacks in the window.
 - New app icon (adaptive, with a monochrome variant for themed icons), also used in the README and as F-Droid listing metadata (`fastlane/metadata/android/en-US/images/icon.png`).
-
-### Added
-- Scan diagnostics: `LINKSTATS` and the watchdog message now report how many scan callbacks arrived and how many carried no NodeWave data, to tell a dead scanner from a filtering problem (a Mi Note 10 once stopped finding peers for over two hours while the watchdog restarted the scan 11 times; a manual stop/start fixed it).
-
-### Changed
 - All user-facing text is now English (the UI was Italian up to v0.3.2): `NODES`, `STATE`, `SEND` / `ALL`, `sending…` / `sent` / `DELIVERED` / `FAILED`, `DEBUG: skip direct link (force relay)`. Changelog entries for earlier versions use the English labels.
 - The development language of the project is English (code, comments, commit messages, docs, UI). The ping payload remains the ham-radio greeting `CIAO - 73`.
+- `docs/SECURITY.md` describes verified contacts and groups, with their limits.
+
+### Fixed
+- **The radio could stay deaf for hours.** A Mi Note 10 found no node for over two hours while its radio looked active; the 0.5.0 watchdog reopened it eleven times without effect, and only stopping and starting the radio by hand cured it. A Honor and a Sony lost their scans the same way. See the watchdog entry above.
+
+### Verified on devices
+- Watchdog on the Mi alone: reopen at 103 s and 181 s, then stop, IDLE, STARTING, ACTIVE in 2 s at 361 s, and the timers start again.
+- Group "Rifugio" created on the Mi with the Honor and the Sony: both invitations arrived, were accepted, and a group message was delivered 2/2 in about 2 s with the right author on both receivers.
+- Contact QR code scanned with the camera, verified mark shown (tried by hand).
+- Not verified on hardware: a deaf scanner that the new watchdog has to recover in the field, members leaving or being removed on real radios.
 
 ## [0.5.0] - 2026-11-01
 
