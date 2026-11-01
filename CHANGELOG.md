@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+### Changed
+- New app icon (adaptive, with a monochrome variant for themed icons), also used in the README and as F-Droid listing metadata (`fastlane/metadata/android/en-US/images/icon.png`).
+
 ### Added
 - Scan diagnostics: `LINKSTATS` and the watchdog message now report how many scan callbacks arrived and how many carried no NodeWave data, to tell a dead scanner from a filtering problem (a Mi Note 10 once stopped finding peers for over two hours while the watchdog restarted the scan 11 times; a manual stop/start fixed it).
 

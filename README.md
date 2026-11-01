@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/icon.png" alt="NodeWave icon" width="128"></p>
+
 # NodeWave
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
