@@ -1,6 +1,6 @@
 # NodeWave security notes
 
-Status: **v0.4.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
+Status: **v0.5.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
 Java/Android platform (no custom cryptography, no third-party crypto libraries), but nobody outside this project
 has reviewed it. Do not rely on it where lives or liberty depend on it.
 
@@ -8,46 +8,69 @@ has reviewed it. Do not rely on it where lives or liberty depend on it.
 
 | Property | How |
 |---|---|
-| Message **confidentiality** between two nodes, even across relays | AES-256-GCM with a key only the two endpoints can derive |
-| Message **integrity and authenticity** | the GCM tag; the sender, recipient, type and message ID are bound into it (AAD) |
-| **Delivery receipts cannot be forged** | ACKs are sealed with the same pair key |
+| Message **confidentiality** between two nodes, even across relays | AES-256-GCM with a session key only the two endpoints can derive |
+| **Forward secrecy** | session keys come from ephemeral ECDH, live in memory only and are wiped when the session ends; stealing a phone's long-term key later does not decrypt recorded traffic |
+| **Key rotation** | a new handshake replaces the session after 1 hour or 500 messages, without interrupting traffic |
+| Message **integrity and authenticity** | the GCM tag; sender, recipient, type, message ID and session ID are bound into it (AAD) |
+| **Delivery receipts cannot be forged** | ACKs are sealed with the same session |
+| **Neighbour announcements (HELLO) cannot be forged or replayed** | sealed with the session and carry a sequence number that must increase |
 | Relays **cannot read or alter** what they forward | they never hold any key for the traffic they carry |
 | Chat history and identity key **at rest** | text encrypted with an Android Keystore AES-256-GCM key; private key wrapped by it; `allowBackup=false` |
 
 ## How it works
 
-1. **Identity.** At first launch each device generates a P-256 key pair. Its **node ID is the first 8 bytes of
-   SHA-256(public key)**, so an ID can only be used by whoever holds the matching key. The private key never
-   leaves the device (stored encrypted with a Keystore-backed key).
-2. **Key exchange.** Before the first message to a node, the sender transmits a `KEY` packet with its public key and
-   the receiver answers with its own. Both packets are routed (and relayed) like messages. A receiver accepts a key
-   only if the point is a valid point on the curve **and** its hash matches the sender ID in the packet; otherwise
-   the packet is dropped. Keys are then remembered (trust on first use).
-3. **Pair key.** ECDH(P-256) followed by HKDF-SHA256 (RFC 5869) with an info string binding both node IDs, giving a
-   256-bit key identical on both sides.
-4. **Messages.** `payload = nonce(12) || ciphertext || tag(16)`, a fresh random nonce per message. The AAD is
-   `version, type, senderId, destId, messageId`. `ttl` and `hops` are excluded because every relay changes them.
-5. **Replay.** Authenticated messages enter a seen-cache keyed by `(senderId, messageId)`; only authenticated
-   packets are added, so a forged packet cannot suppress a real one. The cache is rebuilt from the stored history
-   at start-up.
+1. **Identity.** At first launch each device generates a P-256 key pair used for **signing only**. Its **node ID is
+   the first 8 bytes of SHA-256(public key)**, so an ID can only be used by whoever holds the matching key. The
+   private key never leaves the device (stored encrypted with a Keystore-backed key).
+2. **Handshake** (two `KEY` packets, routed and relayed like messages), a signed ephemeral Diffie-Hellman:
+   - request `A -> B`: `IA, EA, Sign_IA("req" | idA | idB | EA)`
+   - response `B -> A`: `IB, EB, Sign_IB("resp" | idB | idA | EB | EA)`
 
-The wire format is documented in `app/src/main/java/com/nodewave/mesh/protocol/Packet.kt`.
+   `IA`/`IB` are the identity public keys, `EA`/`EB` fresh ephemeral keys. Each side checks that the point is
+   on the curve, that SHA-256 of the identity key matches the sender's node ID, and the signature. The response
+   signs `EA`, so only the live initiator can accept it, and the transcript names both nodes, so it cannot be
+   replayed to someone else.
+3. **Session keys.** `HKDF-SHA256(ECDH(ea, EB))` bound to both node IDs and both ephemeral keys, expanded into
+   one key per direction plus a 32-bit session ID. The ephemeral private keys are dropped right after.
+4. **Messages.** `payload = sid(4) | nonce(12) | ciphertext | tag(16)`, a fresh random nonce per message. The AAD is
+   `version, type, senderId, destId, messageId, sid`. `ttl` and `hops` are excluded because every relay changes
+   them. Directional keys mean a payload cannot be reflected back to its sender.
+5. **Using sessions safely.**
+   - The session used for sending is the most recently *adopted* one. The initiator adopts immediately; the
+     responder only after it has decrypted a message under the session, so a replayed old request cannot hijack
+     its outgoing traffic.
+   - Adopting a session retires older sessions of the same role only, and retired ones keep decrypting for two
+     minutes before being wiped. Every session also ends two hours after creation at the latest.
+   - A peer that restarted lost its sessions and starts a new one; the same rule picks it up as soon as it proves
+     live. A message that could not be read is simply sent again if no ACK comes back.
+   - Requests from one peer are accepted at most every 2 s, with at most 6 sessions per peer.
+6. **Replay.** Authenticated messages enter a seen-cache keyed by `(senderId, messageId)`; only authenticated
+   packets are added, so a forged packet cannot suppress a real one. Sessions live in memory only, so a recorded
+   packet cannot be decrypted at all after the app restarts.
+7. **Radio stop.** Stopping the radio wipes every session key.
+
+The wire format is documented in `app/src/main/java/com/nodewave/mesh/protocol/Packet.kt`, the handshake in
+`app/src/main/java/com/nodewave/mesh/crypto/SessionManager.kt`.
 
 ## Known limitations
 
+- **Forward secrecy is best effort on the device.** Keys are zeroed when sessions end, but the JVM may leave
+  copies in memory and ephemeral private keys are simply dropped, not wiped. It protects against later theft of
+  *stored* keys (disk, backup, long-term key), not against someone who dumps the memory of a running app.
+- **The chat history is not forward secret.** It is stored encrypted with a Keystore key so you can read it
+  again; anyone who can use that key (an unlocked, compromised phone) can read it. Use *CLEAR* to delete it.
 - **Metadata is visible.** Anyone in Bluetooth range can see node IDs, node names (they are advertised), packet
-  type, sender and recipient IDs, sizes and timing. Only message *text* is protected.
+  type, sender and recipient IDs, sizes and timing. Only message text and neighbour lists are protected.
 - **Node IDs are 64 bits.** To impersonate a specific node an attacker must find a different key pair whose hash
   starts with the same 8 bytes, roughly 2^64 work: out of reach for casual attackers, not for a well-funded one.
   For high-stakes conversations, compare node IDs out of band (the app shows the full ID, grouped by four digits).
 - **First contact is trusted.** The ID-to-key binding stops key substitution for an ID you already know, but
   nothing proves that an ID belongs to the person you think it does until you compare it.
-- **No forward secrecy.** The pair key comes from the long-term keys, so an attacker who later extracts a device's
-  private key can decrypt traffic they recorded earlier. There is no key rotation yet.
-- **HELLO packets are not authenticated.** A nearby attacker can announce fake neighbour lists and misdirect or
-  black-hole routing (a denial of service). It cannot read or forge messages.
-- **Replays beyond the stored history** (older than the last 500 messages, or after *CLEAR*) are not recognised
-  and would show up as duplicate messages.
+- **Stealing the long-term key allows impersonation from then on**, not decrypting the past. There is no
+  revocation: if a phone is lost, its node ID stays valid for anyone who holds the key.
+- **A session cannot be started to a node that is unreachable**, and the first message to a node (or after a peer
+  restarted) takes a round trip longer. Denial of service by a nearby attacker (jamming, flooding with valid-looking
+  handshakes, which are rate limited) is not prevented.
 - **A compromised phone** (malware, unlocked device, root) exposes everything the app can read.
 - **Release builds are debug-signed** for now; verify what you install.
 

@@ -8,14 +8,13 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.SecureRandom
 
 class CryptoTest {
     private val alice = LocalIdentity.generate()
     private val bob = LocalIdentity.generate()
     private val aad = byteArrayOf(1, 2, 3)
-
-    private fun pairKey(me: LocalIdentity, other: LocalIdentity) =
-        Crypto.sharedKey(me.privateKey, other.publicKey, me.nodeId, other.nodeId)!!
+    private val key = ByteArray(32) { (it * 7).toByte() }
 
     // ---- identity
 
@@ -37,8 +36,9 @@ class CryptoTest {
     fun identityRestoresFromItsStoredForm() {
         val restored = LocalIdentity.restore(alice.privateKeyEncoded(), alice.publicKey)!!
         assertEquals(alice.nodeId, restored.nodeId)
-        // the restored private key still agrees with the same peer key
-        assertArrayEquals(pairKey(alice, bob), pairKey(restored, bob))
+        // the restored private key still signs for the same public key
+        val sig = Crypto.sign(restored.privateKey, "x".toByteArray())
+        assertTrue(Crypto.verify(Crypto.decodePublic(alice.publicKey)!!, "x".toByteArray(), sig))
     }
 
     @Test
@@ -74,7 +74,7 @@ class CryptoTest {
     fun pointNotOnTheCurveIsRejected() {
         val bad = alice.publicKey.copyOf().also { it[64] = (it[64] + 1).toByte() }
         assertNull(Crypto.decodePublic(bad))
-        assertNull(Crypto.sharedKey(bob.privateKey, bad, bob.nodeId, Crypto.nodeIdOf(bad)))
+        assertNull(Crypto.ecdh(bob.privateKey, bad))
     }
 
     @Test
@@ -84,67 +84,110 @@ class CryptoTest {
         assertNull(Crypto.decodePublic(ByteArray(65).also { it[0] = 4 })) // (0,0) is not on P-256
     }
 
-    // ---- key agreement
+    // ---- ECDH
 
     @Test
-    fun bothSidesDeriveTheSameKey() {
-        val k1 = pairKey(alice, bob)
-        val k2 = pairKey(bob, alice)
-        assertEquals(32, k1.size)
-        assertArrayEquals(k1, k2)
+    fun bothSidesDeriveTheSameSecret() {
+        val s1 = Crypto.ecdh(alice.privateKey, bob.publicKey)!!
+        val s2 = Crypto.ecdh(bob.privateKey, alice.publicKey)!!
+        assertEquals(32, s1.size)
+        assertArrayEquals(s1, s2)
     }
 
     @Test
-    fun differentPairsGetDifferentKeys() {
+    fun differentPairsGetDifferentSecrets() {
         val carol = LocalIdentity.generate()
-        assertFalse(pairKey(alice, bob).contentEquals(pairKey(alice, carol)))
+        assertFalse(Crypto.ecdh(alice.privateKey, bob.publicKey)!!.contentEquals(Crypto.ecdh(alice.privateKey, carol.publicKey)!!))
+    }
+
+    // ---- signatures
+
+    @Test
+    fun signatureVerifiesOnlyForTheSameDataAndKey() {
+        val data = "transcript".toByteArray()
+        val sig = Crypto.sign(alice.privateKey, data)
+        assertEquals(64, sig.size)
+        val pub = Crypto.decodePublic(alice.publicKey)!!
+        assertTrue(Crypto.verify(pub, data, sig))
+        assertFalse(Crypto.verify(pub, "transcripT".toByteArray(), sig))
+        assertFalse(Crypto.verify(Crypto.decodePublic(bob.publicKey)!!, data, sig))
     }
 
     @Test
-    fun keyIsBoundToTheClaimedNodeIds() {
-        val honest = pairKey(alice, bob)
-        val wrongId = Crypto.sharedKey(alice.privateKey, bob.publicKey, alice.nodeId, "0000000000000000")!!
-        assertFalse(honest.contentEquals(wrongId))
+    fun everyFlippedSignatureBitIsDetected() {
+        val data = "x".toByteArray()
+        val sig = Crypto.sign(alice.privateKey, data)
+        val pub = Crypto.decodePublic(alice.publicKey)!!
+        for (i in sig.indices) {
+            assertFalse("byte $i", Crypto.verify(pub, data, sig.copyOf().also { it[i] = (it[i].toInt() xor 1).toByte() }))
+        }
+    }
+
+    @Test
+    fun malformedSignaturesAreRejectedNotThrown() {
+        val pub = Crypto.decodePublic(alice.publicKey)!!
+        assertFalse(Crypto.verify(pub, ByteArray(1), ByteArray(0)))
+        assertFalse(Crypto.verify(pub, ByteArray(1), ByteArray(63)))
+        assertFalse(Crypto.verify(pub, ByteArray(1), ByteArray(64)))
+        assertFalse(Crypto.verify(pub, ByteArray(1), ByteArray(64) { 0xFF.toByte() }))
+    }
+
+    @Test
+    fun derConversionRoundTripsForAnyRAndS() {
+        val rnd = SecureRandom()
+        repeat(300) {
+            val raw = ByteArray(64).also { rnd.nextBytes(it) }
+            // exercise leading zeros (short integers) and high bits (0x00 padding in DER)
+            if (it % 3 == 0) { raw[0] = 0; raw[1] = 0 }
+            if (it % 5 == 0) { raw[32] = 0 }
+            if (it % 7 == 0) { raw[0] = 0x80.toByte() }
+            assertArrayEquals(raw, Crypto.derToRaw(Crypto.rawToDer(raw)))
+        }
+    }
+
+    @Test
+    fun manyRealSignaturesVerify() {
+        val pub = Crypto.decodePublic(alice.publicKey)!!
+        repeat(100) {
+            val data = ByteArray(40).also { d -> SecureRandom().nextBytes(d) }
+            assertTrue(Crypto.verify(pub, data, Crypto.sign(alice.privateKey, data)))
+        }
     }
 
     // ---- sealing
 
     @Test
     fun sealThenOpenRoundTrips() {
-        val key = pairKey(alice, bob)
         val sealed = Crypto.seal(key, "CIAO - 73 è già così".toByteArray(), aad)
-        assertEquals("CIAO - 73 è già così", Crypto.open(pairKey(bob, alice), sealed, aad)!!.toString(Charsets.UTF_8))
+        assertEquals("CIAO - 73 è già così", Crypto.open(key, sealed, aad)!!.toString(Charsets.UTF_8))
     }
 
     @Test
     fun sealedSizeIsPlaintextPlusOverhead() {
-        val sealed = Crypto.seal(pairKey(alice, bob), ByteArray(100), aad)
+        val sealed = Crypto.seal(key, ByteArray(100), aad)
         assertEquals(100 + Crypto.SEAL_OVERHEAD, sealed.size)
         assertEquals(28, Crypto.SEAL_OVERHEAD)
     }
 
     @Test
     fun emptyPlaintextIsAllowed() {
-        val key = pairKey(alice, bob)
         assertEquals(0, Crypto.open(key, Crypto.seal(key, ByteArray(0), aad), aad)!!.size)
     }
 
     @Test
     fun plaintextDoesNotAppearInTheCiphertext() {
-        val sealed = Crypto.seal(pairKey(alice, bob), "very secret words".toByteArray(), aad)
+        val sealed = Crypto.seal(key, "very secret words".toByteArray(), aad)
         assertFalse(String(sealed, Charsets.ISO_8859_1).contains("secret"))
     }
 
     @Test
     fun everySealUsesAFreshNonce() {
-        val key = pairKey(alice, bob)
         val nonces = (1..200).map { Crypto.seal(key, ByteArray(1), aad).copyOf(Crypto.NONCE_BYTES).toList() }.toSet()
         assertEquals(200, nonces.size)
     }
 
     @Test
     fun anyFlippedBitIsDetected() {
-        val key = pairKey(alice, bob)
         val sealed = Crypto.seal(key, "hello".toByteArray(), aad)
         for (i in sealed.indices) {
             val tampered = sealed.copyOf().also { it[i] = (it[i].toInt() xor 1).toByte() }
@@ -154,7 +197,6 @@ class CryptoTest {
 
     @Test
     fun wrongAadIsDetected() {
-        val key = pairKey(alice, bob)
         val sealed = Crypto.seal(key, "hello".toByteArray(), aad)
         assertNull(Crypto.open(key, sealed, byteArrayOf(1, 2, 4)))
         assertNull(Crypto.open(key, sealed, ByteArray(0)))
@@ -162,14 +204,12 @@ class CryptoTest {
 
     @Test
     fun wrongKeyIsDetected() {
-        val sealed = Crypto.seal(pairKey(alice, bob), "hello".toByteArray(), aad)
-        val carol = LocalIdentity.generate()
-        assertNull(Crypto.open(pairKey(alice, carol), sealed, aad))
+        val sealed = Crypto.seal(key, "hello".toByteArray(), aad)
+        assertNull(Crypto.open(ByteArray(32) { 1 }, sealed, aad))
     }
 
     @Test
     fun truncatedInputIsRejected() {
-        val key = pairKey(alice, bob)
         val sealed = Crypto.seal(key, "hello".toByteArray(), aad)
         assertNull(Crypto.open(key, sealed.copyOf(Crypto.SEAL_OVERHEAD - 1), aad))
         assertNull(Crypto.open(key, sealed.copyOf(sealed.size - 1), aad))

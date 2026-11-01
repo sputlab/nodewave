@@ -7,10 +7,10 @@ enum class PacketType(val code: Int) {
     PING(2),
     ACK(3),
 
-    /** One-hop neighbour announcement used to build the reachability table. Never forwarded. */
+    /** One-hop neighbour announcement used to build the reachability table; sealed, never forwarded. */
     HELLO(4),
 
-    /** Public-key exchange, routed like a message; see [KeyPayload]. */
+    /** Authenticated ephemeral key exchange, routed like a message; payload is a [com.nodewave.mesh.crypto.HandshakeMessage]. */
     KEY(5);
 
     companion object {
@@ -19,13 +19,14 @@ enum class PacketType(val code: Int) {
 }
 
 /**
- * Wire format v3 (big-endian), 24-byte header:
+ * Wire format v4 (big-endian), 24-byte header:
  * `[version u8][type u8][ttl u8][hops u8][senderId 8B][destId 8B][messageId i32][payload ...]`
  *
  * `senderId` is the original author and never changes while a packet is relayed; `ttl` is
  * decremented and `hops` incremented by every relay, so they are not authenticated; everything else in
- * the header is bound into the AES-GCM tag of MESSAGE/PING/ACK payloads through [aad]. MESSAGE and PING
- * payloads are sealed text, ACK payloads are the sealed 4-byte messageId being acknowledged.
+ * the header is bound into the AES-GCM tag of sealed payloads through [aad]. MESSAGE and PING payloads
+ * are sealed text, ACK payloads the sealed 4-byte messageId being acknowledged, HELLO payloads a sealed
+ * sequence number and neighbour list (see [com.nodewave.mesh.crypto.Sealed]).
  * (senderId, messageId) uniquely identifies a packet network-wide.
  */
 class Packet(
@@ -65,7 +66,7 @@ class Packet(
             .array()
 
     companion object {
-        const val VERSION = 3
+        const val VERSION = 4
         const val NODE_ID_BYTES = 8
         const val NODE_ID_HEX_LENGTH = NODE_ID_BYTES * 2
         const val HEADER_SIZE = 4 + NODE_ID_BYTES * 2 + Int.SIZE_BYTES

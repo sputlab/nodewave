@@ -11,9 +11,22 @@ data class PeerNode(
 )
 
 data class IncomingPayload(
-    val senderId: String,
+    /**
+     * Opaque id of the radio link the bytes arrived on (not a node ID). While that link stays open the
+     * receiver can answer on it by passing the id as [SendOptions.viaLink], which saves opening a connection.
+     */
+    val linkId: String,
     val rawBytes: ByteArray,
     val rssi: Int? = null
+)
+
+data class SendOptions(
+    /** Background traffic: never queues behind or delays user traffic, fails fast with [TransportBusyException] if the radio is busy. */
+    val lowPriority: Boolean = false,
+    /** An answer is expected: after delivering, keep the link open for a short while so the peer can reply on it. */
+    val expectReply: Boolean = false,
+    /** A link believed to be open to the target (from [IncomingPayload.linkId]); used instead of connecting when it still is. */
+    val viaLink: String? = null
 )
 
 enum class TransportState {
@@ -31,11 +44,7 @@ interface MeshTransport {
 
     suspend fun start(localNodeName: String): Result<Unit>
     suspend fun stop()
-    /**
-     * @param lowPriority background traffic (e.g. neighbour announcements): never queues behind or
-     * delays user traffic, fails fast with [TransportBusyException] if the radio is in use.
-     */
-    suspend fun send(targetPeerId: String, payload: ByteArray, lowPriority: Boolean = false): Result<Unit>
+    suspend fun send(targetPeerId: String, payload: ByteArray, options: SendOptions = SendOptions()): Result<Unit>
     suspend fun broadcast(payload: ByteArray): Result<Unit>
 }
 

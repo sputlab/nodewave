@@ -6,6 +6,7 @@ import com.nodewave.mesh.data.PeerKeyStore
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshTransport
 import com.nodewave.mesh.transport.PeerNode
+import com.nodewave.mesh.transport.SendOptions
 import com.nodewave.mesh.transport.TransportBusyException
 import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.CoroutineScope
@@ -21,14 +22,30 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlin.random.Random
 
-/** In-memory radio: a transport can only reach the nodes the test says it can "see". */
-internal class FakeNetwork {
+/**
+ * In-memory radio: a transport can only reach the nodes the test says it can "see". Links behave like
+ * the real ones: a connection opened for a send that expects an answer stays usable by both ends for
+ * [linkLifetimeMs] of virtual time, and a send that names such a link reuses it instead of connecting.
+ */
+internal class FakeNetwork(private val clock: () -> Long = { 0L }) {
     val transports = mutableMapOf<String, FakeTransport>()
     val deliveries = mutableListOf<Pair<String, String>>() // (from, to) per radio write
     /** Every payload put on the air, i.e. what an eavesdropper would capture. */
     val wire = mutableListOf<ByteArray>()
     /** Return true to make the radio lose a payload. */
     var dropIf: (ByteArray) -> Boolean = { false }
+
+    /** New connections opened, as (from, to). Writes on an existing link are not counted. */
+    val connectionsOpened = mutableListOf<Pair<String, String>>()
+    /** Every send: (from, to, options, decoded packet or null). */
+    class Sent(val from: String, val to: String, val options: SendOptions, val packet: Packet?)
+    val sent = mutableListOf<Sent>()
+    var linkLifetimeMs = 2_500L
+    /** Every node built on this network gets its own random seed, restarted ones included. */
+    var nodesCreated = 0
+
+    private class Link(val a: String, val aId: String, val b: String, val bId: String, var expiresAt: Long)
+    private val links = mutableMapOf<Pair<String, String>, Link>() // (holder node, holder's link id) -> link
 
     fun link(a: String, b: String) {
         transports.getValue(a).see(b)
@@ -42,6 +59,8 @@ internal class FakeNetwork {
 
     fun wireOfType(type: PacketType): List<Packet> = wire.mapNotNull { Packet.decode(it) }.filter { it.type == type }
 
+    fun sentOfType(type: PacketType) = sent.filter { it.packet?.type == type }
+
     inner class FakeTransport(val id: String) : MeshTransport {
         override val state = MutableStateFlow(TransportState.ACTIVE)
         private val peers = MutableStateFlow<List<PeerNode>>(emptyList())
@@ -54,9 +73,11 @@ internal class FakeNetwork {
         var lowPrioritySends = 0
 
         fun see(other: String) {
-            peers.value = (peers.value.filterNot { it.id == other } + PeerNode(other, "N-${other.takeLast(2)}", -50))
+            peers.value = (peers.value.filterNot { it.id == other } + PeerNode(other, "peer-${other.takeLast(4)}", -50))
                 .sortedBy { it.id }
         }
+
+        fun unsee(other: String) { peers.value = peers.value.filterNot { it.id == other } }
 
         fun forgetAll() { peers.value = emptyList() }
 
@@ -64,15 +85,40 @@ internal class FakeNetwork {
 
         override suspend fun start(localNodeName: String) = Result.success(Unit)
         override suspend fun stop() {}
-        override suspend fun send(targetPeerId: String, payload: ByteArray, lowPriority: Boolean): Result<Unit> {
-            if (busy && lowPriority) return Result.failure(TransportBusyException())
+
+        override suspend fun send(targetPeerId: String, payload: ByteArray, options: SendOptions): Result<Unit> {
+            if (busy && options.lowPriority) return Result.failure(TransportBusyException())
+            val now = clock()
+            sent += Sent(id, targetPeerId, options, Packet.decode(payload))
+
+            // an existing link named by the caller
+            options.viaLink?.let { viaId ->
+                val link = links[id to viaId]
+                if (link != null && now <= link.expiresAt) {
+                    val (peer, peerLinkId) = if (link.a == id) link.b to link.bId else link.a to link.aId
+                    if (peer == targetPeerId) {
+                        if (options.expectReply) link.expiresAt = maxOf(link.expiresAt, now + linkLifetimeMs)
+                        return put(targetPeerId, payload, peerLinkId, options)
+                    }
+                }
+            }
             if (peers.value.none { it.id == targetPeerId }) return Result.failure(IllegalStateException("not visible"))
-            if (lowPriority) lowPrioritySends++
-            deliveries += id to targetPeerId
+            // a new connection
+            connectionsOpened += id to targetPeerId
+            val link = Link(id, "c:$targetPeerId", targetPeerId, "s:$id", now + if (options.expectReply) linkLifetimeMs else 0L)
+            links[id to link.aId] = link
+            links[targetPeerId to link.bId] = link
+            return put(targetPeerId, payload, link.bId, options)
+        }
+
+        private fun put(target: String, payload: ByteArray, linkIdAtTarget: String, options: SendOptions): Result<Unit> {
+            if (options.lowPriority) lowPrioritySends++
+            deliveries += id to target
             wire += payload.copyOf()
-            if (!dropIf(payload)) transports.getValue(targetPeerId).deliver(IncomingPayload("ble-$id", payload))
+            if (!dropIf(payload)) transports.getValue(target).deliver(IncomingPayload(linkIdAtTarget, payload))
             return Result.success(Unit)
         }
+
         override suspend fun broadcast(payload: ByteArray) = Result.success(Unit)
     }
 }
@@ -103,9 +149,14 @@ internal class TestNode(
     fun sent() = messenger.messages.value.filter { it.outgoing }
 }
 
+/** A network whose links and sessions follow the test's virtual clock. */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun TestScope.network() = FakeNetwork { testScheduler.currentTime }
+
 /**
  * Builds a node on [net]. Pass the same [identity]/[store]/[keys] again to simulate an app restart.
- * Key derivation runs on the test scheduler so the whole simulation stays deterministic.
+ * Crypto runs on the test scheduler and the messenger uses the virtual clock, so the whole simulation
+ * (handshakes, link lifetimes, rotation, retransmission) stays deterministic.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 internal fun TestScope.node(
@@ -113,12 +164,15 @@ internal fun TestScope.node(
     identity: LocalIdentity = LocalIdentity.generate(),
     store: InMemoryMessageStore = InMemoryMessageStore(),
     keys: InMemoryPeerKeyStore = InMemoryPeerKeyStore(),
-    random: Random = Random.Default
+    /** Defaults to a fixed seed per node created, so timings (hello jitter, who starts a handshake) repeat. */
+    random: Random? = null
 ): TestNode {
     val transport = net.FakeTransport(identity.nodeId).also { net.transports[identity.nodeId] = it }
     val messenger = MeshMessenger(
-        transport, identity, backgroundScope as CoroutineScope, store, keys, random,
-        cryptoDispatcher = StandardTestDispatcher(testScheduler)
+        transport, identity, backgroundScope as CoroutineScope, store, keys,
+        random ?: Random(7919L * (++net.nodesCreated)),
+        cryptoDispatcher = StandardTestDispatcher(testScheduler),
+        clock = { testScheduler.currentTime }
     )
     return TestNode(identity, messenger, transport, store, keys)
 }

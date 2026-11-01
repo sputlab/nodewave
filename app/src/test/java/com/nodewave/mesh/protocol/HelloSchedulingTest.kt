@@ -12,7 +12,7 @@ import kotlin.random.Random
 class HelloSchedulingTest {
 
     private fun TestScope.pair(): Triple<FakeNetwork, TestNode, TestNode> {
-        val net = FakeNetwork()
+        val net = network()
         val a = node(net, random = Random(1)); val b = node(net, random = Random(2))
         net.link(a.id, b.id)
         return Triple(net, a, b)
@@ -21,11 +21,11 @@ class HelloSchedulingTest {
     @Test
     fun helloIsSentAtLowPriorityShortlyAfterDiscoveryThenOnlyAboutEveryMinute() = runTest {
         val (_, a, _) = pair()
-        advanceTimeBy(8_000)
-        assertEquals(1, a.transport.lowPrioritySends) // within the 0-4 s change delay
-        advanceTimeBy(30_000)
+        advanceTimeBy(12_000)
+        assertEquals(1, a.transport.lowPrioritySends) // the 0-4 s change delay, plus a tick for the handshake it needs
+        advanceTimeBy(28_000)
         assertEquals(1, a.transport.lowPrioritySends) // never before 45 s after the previous round
-        advanceTimeBy(57_000)
+        advanceTimeBy(50_000)
         assertEquals(2, a.transport.lowPrioritySends) // always by 75 s, and not yet a third
     }
 
@@ -33,7 +33,7 @@ class HelloSchedulingTest {
     fun differentSeedsDesynchroniseTheSchedule() = runTest {
         // Same start, same neighbours: only the random draws differ. Over several rounds the
         // two nodes must not send in lockstep (as they did before jitter existed).
-        val net = FakeNetwork()
+        val net = network()
         val a = node(net, random = Random(1)); val b = node(net, random = Random(99))
         net.link(a.id, b.id)
         val atA = mutableListOf<Long>(); val atB = mutableListOf<Long>()
@@ -43,7 +43,7 @@ class HelloSchedulingTest {
             if (a.transport.lowPrioritySends != lastA) { lastA = a.transport.lowPrioritySends; atA += sec.toLong() }
             if (b.transport.lowPrioritySends != lastB) { lastB = b.transport.lowPrioritySends; atB += sec.toLong() }
         }
-        assert(atA.size >= 8 && atB.size >= 8)
+        assert(atA.size >= 7 && atB.size >= 7)
         assert(atA.zip(atB).any { (x, y) -> kotlin.math.abs(x - y) >= 6 }) // drifted apart
     }
 

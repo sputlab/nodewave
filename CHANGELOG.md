@@ -9,6 +9,49 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 - All user-facing text is now English (the UI was Italian up to v0.3.2): `NODES`, `STATE`, `SEND` / `ALL`, `sending…` / `sent` / `DELIVERED` / `FAILED`, `DEBUG: skip direct link (force relay)`. Changelog entries for earlier versions use the English labels.
 - The development language of the project is English (code, comments, commit messages, docs, UI). The ping payload remains the ham-radio greeting `CIAO - 73`.
 
+## [0.5.0] - 2026-11-01
+
+Forward secrecy, key rotation, authenticated HELLOs and a much more reliable radio link.
+
+### Added
+- **Forward secrecy.** The static pair key is gone. Each pair of nodes runs a signed ephemeral ECDH handshake (identity keys now only *sign*): `IA, EA, Sign_IA(req|idA|idB|EA)` answered by `IB, EB, Sign_IB(resp|idB|idA|EB|EA)`. Keys are derived with HKDF-SHA256 into one key per direction plus a session ID, live in memory only and are wiped when the session ends. Node IDs do not change (they are still the hash of the identity key).
+- **Key rotation.** A session is replaced after 1 hour or 500 messages by a new handshake started in the background, so traffic never stalls; the old session decrypts stragglers for 2 minutes and is wiped. Every session ends after 2 hours at the latest, and stopping the radio wipes all of them.
+- **Authenticated HELLOs.** Neighbour announcements are sealed with the session (confidential and authenticated) and carry an increasing sequence number, so they cannot be forged, read by eavesdroppers or replayed to bring back a stale route. A neighbour without a session first gets a handshake.
+- **Replies on the same connection.** The GATT server gained a TX characteristic that notifies; the client subscribes. An ACK or a handshake response is sent back as a notification on the link that carried the request, and a send that expects an answer keeps its connection open for a short while (2.5 s) so follow-ups reuse it. A direct exchange (handshake, message, ACK) now needs one connection instead of several, and the "connection both ways at once" collisions largely disappear.
+- **Resend.** A message with no ACK after 10 s is sent again (twice at most, then `FAILED`); the receiver recognises copies. This also recovers the message sent right after a peer restarted and lost its sessions.
+- **Radio watchdog.** If nothing is heard for 90 s (doubling up to 10 min when really alone) the scan is restarted, and advertising is refreshed every 4 minutes. Seen on an Honor View 10: it silently stopped scanning and advertising while the app still said `ACTIVE`; restarting the radio cured it.
+- `LINKSTATS` log line every 30 s (connections opened/ok/failed by error code, reuses, replies, watchdog restarts).
+- Connection priority HIGH on outgoing links (short connection interval for the burst).
+- 146 unit tests (new: ECDSA and DER signature handling, the complete session manager, key rotation, forward-secrecy wiping, replayed and forged handshakes/HELLOs/ACKs, simultaneous handshakes, restarts, resends, link reuse). Eight security checks were each broken on purpose to confirm a test fails.
+
+### Changed
+- Packet format version 4: `KEY` payload is the 195-byte signed handshake message; MESSAGE/PING/ACK/HELLO payloads are `sid | nonce | ciphertext | tag` (32 bytes of overhead, text limit stays 180 bytes).
+- `MeshTransport.send` takes `SendOptions(lowPriority, expectReply, viaLink)` and `IncomingPayload` carries an opaque `linkId`.
+- The "E2E key" indicator now means *a live session exists*.
+- `Permission check OK` is logged once at start instead of on every send.
+
+### Fixed
+- **Sessions could break after two minutes when both phones started a handshake at the same time.** Each side adopted the newest session and retired the others, but the two picked different ones; once the grace period ended each dropped the session the other still used and packets stopped decrypting until a new handshake. Found by breaking a security test on purpose and noticing the mutation survived. Adoption now retires only sessions of the same role, and sessions are bounded by age.
+- A message sent just after the other phone restarted was lost silently (now resent, see above).
+
+### Measured
+Same scripted pings through the UI, Mi Note 10 <-> Honor View 10 (the Sony could not be unlocked for this run):
+
+| | 0.4.0 | 0.5.0 |
+|---|---|---|
+| Pings delivered | 18/18 | 24/24 |
+| Delivery time, median (p90) | 2.7 s (3.8 s) | 1.3 s (1.5 s) |
+| Connections opened | 101 for 18 pings | 43 for 24 pings |
+| Connections failed | 12% (Honor 23%) | 2% (Honor 5%) |
+
+Small samples (a single failure in the new run), on two phones, with the phones next to each other: read it as "clearly better", not as a guarantee.
+
+### Breaking
+- v0.5.0 is **not wire-compatible** with earlier versions (protocol version 4). Update every device. Node IDs, identity keys and chat history are kept.
+
+### Known limitations
+- Not verified on hardware: key rotation after an hour (simulation only, it reuses the handshake path), the radio watchdog (needs a phone to lose its radio on its own), real Doze, three-phone encrypted relay with the new transport. See [docs/SECURITY.md](docs/SECURITY.md) for the security limits; the code has not been independently audited.
+
 ## [0.4.0] - 2026-11-01
 
 Background operation, persistent history and end-to-end encryption.

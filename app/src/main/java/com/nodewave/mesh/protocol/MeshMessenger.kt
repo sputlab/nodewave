@@ -1,12 +1,15 @@
 package com.nodewave.mesh.protocol
 
-import com.nodewave.mesh.crypto.Crypto
 import com.nodewave.mesh.crypto.LocalIdentity
+import com.nodewave.mesh.crypto.Sealed
+import com.nodewave.mesh.crypto.Session
+import com.nodewave.mesh.crypto.SessionManager
 import com.nodewave.mesh.data.MessageStore
 import com.nodewave.mesh.data.PeerKeyStore
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshLog
 import com.nodewave.mesh.transport.MeshTransport
+import com.nodewave.mesh.transport.SendOptions
 import com.nodewave.mesh.transport.TransportBusyException
 import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.CompletableDeferred
@@ -41,9 +44,10 @@ data class NodeEntry(
 }
 
 /**
- * Application protocol on top of a [MeshTransport]: packet framing, end-to-end encryption (public-key
- * exchange, AES-GCM sealing, authenticated ACKs), multi-hop relay (route lookup, flooding fallback,
- * seen-cache, TTL), neighbour HELLOs and persistent chat history. Knows nothing about BLE.
+ * Application protocol on top of a [MeshTransport]: packet framing, end-to-end encryption with forward
+ * secrecy (authenticated ephemeral handshake, sealed payloads, session rotation), authenticated HELLOs,
+ * multi-hop relay (route lookup, flooding fallback, seen-cache, TTL) and persistent chat history.
+ * Knows nothing about BLE except the opaque link ids the transport hands out.
  *
  * All state is confined to [scope], which must run on a single thread (the main dispatcher in the app).
  */
@@ -54,19 +58,28 @@ class MeshMessenger(
     private val messageStore: MessageStore,
     private val peerKeys: PeerKeyStore,
     private val random: Random = Random.Default,
-    /** Where the one-off ECDH key derivation runs; tests pass a deterministic dispatcher. */
-    private val cryptoDispatcher: CoroutineDispatcher = Dispatchers.Default
+    /** Where handshake crypto (ECDSA, ECDH) runs; tests pass a deterministic dispatcher. */
+    private val cryptoDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val sessions: SessionManager = SessionManager(identity, clock)
 ) {
     companion object {
         const val PING_TEXT = "CIAO - 73"
-        /** Largest plaintext: header (24) + nonce and tag (28) + text must fit a 244-byte ATT payload. */
+        /** Largest plaintext: header (24) + sealing overhead (32) + text must fit a 244-byte ATT payload. */
         const val MAX_TEXT_BYTES = 180
         private const val MAX_HISTORY = 500
         private const val MAX_SEEN = 1024
         private const val ACK_ATTEMPTS = 2
         private const val ACK_RETRY_DELAY_MS = 700L
+        /** No ACK after this long: send the message again (the peer may have restarted and lost its sessions). */
+        private const val RETRANSMIT_AFTER_MS = 10_000L
+        private const val MAX_RETRANSMITS = 2
         private const val KEY_ATTEMPTS = 3
         private const val KEY_TIMEOUT_MS = 5_000L
+        /** Background (HELLO-driven) handshakes towards one peer are at least this far apart. */
+        private const val BACKGROUND_HANDSHAKE_COOLDOWN_MS = 20_000L
+        /** A link on which a peer just spoke is assumed to still be open for this long. */
+        private const val LINK_HINT_TTL_MS = 2_500L
         private const val TICK_MS = 2_000L
         private const val HELLO_INTERVAL_MS = 60_000L
         /** Each periodic HELLO round is drawn from 60 s +/- 15 s so phones never stay in lockstep. */
@@ -88,7 +101,7 @@ class MeshMessenger(
     private val _ignoreDirect = MutableStateFlow(false)
     val ignoreDirect: StateFlow<Boolean> = _ignoreDirect.asStateFlow()
 
-    /** Nodes whose public key we hold, i.e. with whom messages are already end-to-end encrypted. */
+    /** Nodes with whom we currently hold an encrypted session. */
     private val _keyedPeers = MutableStateFlow<Set<String>>(emptySet())
     val keyedPeers: StateFlow<Set<String>> = _keyedPeers.asStateFlow()
 
@@ -108,8 +121,12 @@ class MeshMessenger(
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val seen = LinkedHashSet<String>()
-    private val sessionKeys = HashMap<String, ByteArray>()
-    private val keyWaiters = HashMap<String, CompletableDeferred<ByteArray?>>()
+    private val sessionWaiters = HashMap<String, CompletableDeferred<Session?>>()
+    /** peer -> (link id, when it last sent us something authentic directly): see [LINK_HINT_TTL_MS]. */
+    private val linkHints = HashMap<String, Pair<String, Long>>()
+    private val lastBackgroundHandshake = HashMap<String, Long>()
+    /** Neighbours owed a HELLO: new or changed neighbour set, periodic round, or radio busy last time. */
+    private val helloPending = mutableSetOf<String>()
 
     /** Writes reach the store strictly in order, off the caller's path. */
     private sealed interface StoreOp {
@@ -125,6 +142,17 @@ class MeshMessenger(
             transport.incomingPayloads.collect { handleIncoming(it) }
         }
         scope.launch { helloLoop() }
+        // Forward secrecy housekeeping: stopping the radio ends every session and wipes its keys.
+        scope.launch {
+            transport.state.collect {
+                if (it == TransportState.IDLE) {
+                    sessions.wipeAll()
+                    sessionWaiters.values.forEach { w -> w.complete(null) }
+                    sessionWaiters.clear()
+                    refreshSecurePeers()
+                }
+            }
+        }
     }
 
     fun setIgnoreDirect(enabled: Boolean) {
@@ -161,10 +189,11 @@ class MeshMessenger(
         val restored = stored.filter { it.key !in liveKeys }.map {
             if (it.status == MessageStatus.SENDING) it.copy(status = MessageStatus.FAILED).also(::persist) else it
         }
+        // Sessions live in memory only, so a replayed recorded packet cannot be decrypted after a restart;
+        // the seen-cache still guards the current process.
         restored.filter { !it.outgoing }.forEach { seen.add("${it.peerId}:${it.messageId}") }
         _messages.update { current -> (restored + current).takeLast(MAX_HISTORY) }
-        _keyedPeers.update { it + runCatching { peerKeys.knownNodeIds() }.getOrDefault(emptySet()) }
-        MeshLog.d("Restored ${restored.size} message(s), ${_keyedPeers.value.size} known key(s)")
+        MeshLog.d("Restored ${restored.size} message(s)")
     }
 
     private suspend fun runStoreWriter() {
@@ -184,67 +213,80 @@ class MeshMessenger(
         storeOps.trySend(StoreOp.Upsert(message))
     }
 
-    // ---------------------------------------------------------------- end-to-end keys
+    // ---------------------------------------------------------------- sessions (forward-secret keys)
 
-    /** The pair key shared with [peerId], from cache or from its stored public key; null if we have none. */
-    private suspend fun keyFor(peerId: String): ByteArray? {
-        sessionKeys[peerId]?.let { return it }
-        val pub = peerKeys.get(peerId) ?: return null
-        return deriveAndCache(peerId, pub)
+    private fun refreshSecurePeers() {
+        _keyedPeers.value = sessions.peersWithSession()
     }
 
-    private suspend fun deriveAndCache(peerId: String, publicKey: ByteArray): ByteArray? {
-        val key = withContext(cryptoDispatcher) {
-            Crypto.sharedKey(identity.privateKey, publicKey, localNodeId, peerId)
-        } ?: return null
-        sessionKeys[peerId] = key
-        _keyedPeers.update { it + peerId }
-        return key
-    }
-
-    /** Returns the pair key, running the public-key handshake first if needed; null if it does not complete. */
-    private suspend fun ensureKey(peerId: String): ByteArray? {
-        keyFor(peerId)?.let { return it }
-        val waiter = keyWaiters.getOrPut(peerId) { CompletableDeferred() }
+    /** Returns the session to send on, running the handshake first if needed; null if it does not complete. */
+    private suspend fun ensureSession(peerId: String): Session? {
+        sessions.sendSession(peerId)?.let { return it }
+        val waiter = sessionWaiters.getOrPut(peerId) { CompletableDeferred() }
         repeat(KEY_ATTEMPTS) { attempt ->
-            MeshLog.d("Key exchange with ${nameOf(peerId)} [${peerId.take(6)}], attempt ${attempt + 1}/$KEY_ATTEMPTS")
-            if (sendKeyPacket(peerId, request = true).isFailure) {
-                keyWaiters.remove(peerId)
+            MeshLog.d("Handshake with ${nameOf(peerId)} [${peerId.take(6)}], attempt ${attempt + 1}/$KEY_ATTEMPTS")
+            if (sendHandshakeRequest(peerId).isFailure) {
+                sessionWaiters.remove(peerId)
                 return null // nobody to carry it: no point in waiting
             }
             withTimeoutOrNull(KEY_TIMEOUT_MS) { waiter.await() }?.let { return it }
         }
-        keyWaiters.remove(peerId)
-        MeshLog.e("Key exchange with ${nameOf(peerId)} timed out")
+        sessionWaiters.remove(peerId)
+        MeshLog.e("Handshake with ${nameOf(peerId)} timed out")
         return null
     }
 
-    private suspend fun sendKeyPacket(destId: String, request: Boolean): Result<Unit> {
-        val packet = Packet(
-            PacketType.KEY, localNodeId, destId, random.nextInt(), KeyPayload.encode(request, identity.publicKey)
-        )
-        return dispatch(packet, originId = null)
+    private suspend fun sendHandshakeRequest(peerId: String): Result<Unit> {
+        val payload = withContext(cryptoDispatcher) { sessions.beginHandshake(peerId) }
+        return sendKeyPacket(peerId, payload, expectReply = true)
     }
 
-    private suspend fun onKey(packet: Packet) {
-        val key = KeyPayload.decode(packet.payload)
-        if (key == null) {
-            MeshLog.e("Malformed KEY from ${packet.senderId.take(6)}")
-            return
-        }
-        // The node ID is the hash of the key: this is what stops anyone from handing us a key for someone else.
-        if (Crypto.nodeIdOf(key.publicKey) != packet.senderId || Crypto.decodePublic(key.publicKey) == null) {
-            MeshLog.e("KEY rejected: not a valid key for ${packet.senderId.take(6)}")
-            return
-        }
-        if (peerKeys.get(packet.senderId) == null) {
-            peerKeys.put(packet.senderId, key.publicKey)
-            MeshLog.d("New key stored for ${nameOf(packet.senderId)} [${packet.senderId.take(6)}]")
-        }
-        val pair = deriveAndCache(packet.senderId, key.publicKey) ?: return
-        keyWaiters.remove(packet.senderId)?.complete(pair)
-        if (key.isRequest) sendKeyPacket(packet.senderId, request = false)
+    /** Handshake started by background traffic (HELLO, undecryptable packet), throttled per peer. */
+    private fun requestSessionInBackground(peerId: String) {
+        val now = clock()
+        if (now - (lastBackgroundHandshake[peerId] ?: Long.MIN_VALUE / 2) < BACKGROUND_HANDSHAKE_COOLDOWN_MS) return
+        lastBackgroundHandshake[peerId] = now
+        scope.launch { sendHandshakeRequest(peerId) }
     }
+
+    private suspend fun sendKeyPacket(destId: String, payload: ByteArray, expectReply: Boolean): Result<Unit> =
+        dispatch(Packet(PacketType.KEY, localNodeId, destId, random.nextInt(), payload), originId = null, expectReply = expectReply)
+
+    private suspend fun onKey(packet: Packet, linkId: String) {
+        val outcome = withContext(cryptoDispatcher) { sessions.onKey(packet.senderId, packet.payload) }
+        val who = "${nameOf(packet.senderId)} [${packet.senderId.take(6)}]"
+        when (outcome) {
+            is SessionManager.KeyOutcome.Rejected -> MeshLog.e("KEY from $who rejected: ${outcome.reason}")
+            is SessionManager.KeyOutcome.Reply -> {
+                remember(packet.senderId, outcome.identityKey)
+                noteLink(packet, linkId)
+                refreshSecurePeers()
+                MeshLog.d("Session ${outcome.session.sid.toUInt().toString(16)} opened by $who")
+                sendKeyPacket(packet.senderId, outcome.payload, expectReply = false)
+            }
+            is SessionManager.KeyOutcome.Established -> {
+                remember(packet.senderId, outcome.identityKey)
+                noteLink(packet, linkId)
+                refreshSecurePeers()
+                MeshLog.d("Session ${outcome.session.sid.toUInt().toString(16)} established with $who")
+                sessionWaiters.remove(packet.senderId)?.complete(outcome.session)
+                helloPending.add(packet.senderId)
+            }
+        }
+    }
+
+    /** Records the identity key of a peer whose handshake verified (its hash is the node ID, so it cannot change). */
+    private fun remember(peerId: String, identityKey: ByteArray) {
+        scope.launch { runCatching { peerKeys.put(peerId, identityKey) } }
+    }
+
+    /** Remembers that [packet]'s author (a direct neighbour) just spoke to us on [linkId]. Call only for authentic packets. */
+    private fun noteLink(packet: Packet, linkId: String) {
+        if (packet.hops == 0) linkHints[packet.senderId] = linkId to clock()
+    }
+
+    private fun hintFor(peerId: String): String? =
+        linkHints[peerId]?.takeIf { clock() - it.second <= LINK_HINT_TTL_MS }?.first
 
     // ---------------------------------------------------------------- sending
 
@@ -261,23 +303,54 @@ class MeshMessenger(
         )
         append(message)
         scope.launch {
-            val key = ensureKey(destId)
-            if (key == null) {
-                setStatus(message.key, MessageStatus.FAILED, onlyFrom = MessageStatus.SENDING)
-                return@launch
+            var attempt = 0
+            while (true) {
+                val session = ensureSession(destId)
+                if (session == null) {
+                    setStatus(message.key, MessageStatus.FAILED, onlyFrom = if (attempt == 0) MessageStatus.SENDING else MessageStatus.SENT)
+                    return@launch
+                }
+                if (sessions.needsRotation(destId)) {
+                    MeshLog.d("Rotating the session with ${nameOf(destId)}")
+                    requestRotation(destId)
+                }
+                // Sealed afresh on every attempt: the session may have changed in between.
+                val sealed = Sealed.seal(session, plain, Packet.aad(type, localNodeId, destId, messageId))
+                sessions.noteSent(session)
+                val result = dispatch(Packet(type, localNodeId, destId, messageId, sealed), originId = null, expectReply = true)
+                if (attempt == 0) {
+                    // An ACK can overtake the end of dispatch(): only move forward from SENDING.
+                    setStatus(message.key, if (result.isSuccess) MessageStatus.SENT else MessageStatus.FAILED, onlyFrom = MessageStatus.SENDING)
+                    if (!result.isSuccess) return@launch
+                }
+                delay(RETRANSMIT_AFTER_MS)
+                if (_messages.value.firstOrNull { it.key == message.key }?.status != MessageStatus.SENT) return@launch
+                attempt++
+                if (attempt > MAX_RETRANSMITS) {
+                    MeshLog.e("No ACK from ${nameOf(destId)} after $attempt tries: giving up")
+                    setStatus(message.key, MessageStatus.FAILED, onlyFrom = MessageStatus.SENT)
+                    return@launch
+                }
+                MeshLog.d("No ACK from ${nameOf(destId)} yet, sending again ($attempt/$MAX_RETRANSMITS)")
             }
-            val sealed = Crypto.seal(key, plain, Packet.aad(type, localNodeId, destId, messageId))
-            val result = dispatch(Packet(type, localNodeId, destId, messageId, sealed), originId = null)
-            // An ACK can overtake the end of dispatch(): only move forward from SENDING.
-            setStatus(message.key, if (result.isSuccess) MessageStatus.SENT else MessageStatus.FAILED, onlyFrom = MessageStatus.SENDING)
         }
+    }
+
+    /** Starts a new handshake while the old session keeps working; its answer replaces the session. */
+    private fun requestRotation(peerId: String) {
+        scope.launch { sendHandshakeRequest(peerId) }
     }
 
     /**
      * Hands [packet] to the next hop(s) chosen by [Router]. [originId] is null for packets we author,
      * otherwise the author of a packet we are relaying. Succeeds if at least one hop accepted it.
      */
-    private suspend fun dispatch(packet: Packet, originId: String?): Result<Unit> {
+    private suspend fun dispatch(
+        packet: Packet,
+        originId: String?,
+        expectReply: Boolean = false,
+        lowPriority: Boolean = false
+    ): Result<Unit> {
         val direct = transport.discoveredPeers.value.map { it.id }.toSet()
         val hops = Router.nextHops(
             packet.destId, originId, direct, routing,
@@ -290,7 +363,7 @@ class MeshMessenger(
         val relayed = if (originId == null) "" else " (relay, hops=${packet.hops}, ttl=${packet.ttl})"
         MeshLog.d("${packet.type} ${packet.uid.take(8)} -> ${packet.destId.take(6)} via ${hops.joinToString { nameOf(it) }}$relayed")
         val bytes = packet.encode()
-        val results = hops.map { transport.send(it, bytes) }
+        val results = hops.map { transport.send(it, bytes, SendOptions(lowPriority, expectReply, hintFor(it))) }
         return if (results.any { it.isSuccess }) Result.success(Unit)
         else Result.failure(results.firstNotNullOf { it.exceptionOrNull() })
     }
@@ -300,33 +373,56 @@ class MeshMessenger(
     private suspend fun handleIncoming(payload: IncomingPayload) {
         val packet = Packet.decode(payload.rawBytes)
         if (packet == null) {
-            MeshLog.e("Dropped malformed/unknown packet (${payload.rawBytes.size}B) from ${payload.senderId}")
+            MeshLog.e("Dropped malformed/unknown packet (${payload.rawBytes.size}B) from link ${payload.linkId}")
             return
         }
         if (packet.destId == localNodeId) {
-            deliverLocally(packet)
+            deliverLocally(packet, payload.linkId)
         } else {
             relay(packet)
         }
     }
 
-    private suspend fun deliverLocally(packet: Packet) {
+    private suspend fun deliverLocally(packet: Packet, linkId: String) {
         when (packet.type) {
-            PacketType.HELLO -> onHello(packet)
-            PacketType.KEY -> if (markSeen(packet)) onKey(packet)
-            PacketType.ACK -> onAck(packet)
-            PacketType.MESSAGE, PacketType.PING -> onMessage(packet)
+            PacketType.HELLO -> onHello(packet, linkId)
+            PacketType.KEY -> if (markSeen(packet)) onKey(packet, linkId)
+            PacketType.ACK -> onAck(packet, linkId)
+            PacketType.MESSAGE, PacketType.PING -> onMessage(packet, linkId)
         }
     }
 
-    private suspend fun onAck(packet: Packet) {
-        val key = keyFor(packet.senderId)
-        val plain = key?.let { Crypto.open(it, packet.payload, packet.aad()) }
-        if (plain == null || plain.size != Int.SIZE_BYTES) {
-            MeshLog.e("ACK from ${packet.senderId.take(6)} dropped: ${if (key == null) "no key" else "authentication failed"}")
-            return
+    /**
+     * Finds the session a sealed packet claims and decrypts it. Returns null (after logging) if there is
+     * none or authentication fails; in the first case a background handshake is started so the next
+     * packet from that peer can be read.
+     */
+    private fun open(packet: Packet): Pair<Session, ByteArray>? {
+        val sid = Sealed.sidOf(packet.payload)
+        val session = sid?.let { sessions.sessionById(packet.senderId, it) }
+        if (session == null) {
+            MeshLog.e("${packet.type} from ${nameOf(packet.senderId)} dropped: no session, requesting one")
+            requestSessionInBackground(packet.senderId)
+            return null
         }
+        val plain = Sealed.open(session, packet.payload, packet.aad())
+        if (plain == null) {
+            MeshLog.e("${packet.type} from ${nameOf(packet.senderId)} dropped: authentication failed")
+            return null
+        }
+        // A responder session is first used for sending only once the peer proves it holds the key.
+        if (!session.initiator && !session.adopted) {
+            sessions.confirm(session)
+            refreshSecurePeers()
+        }
+        return session to plain
+    }
+
+    private fun onAck(packet: Packet, linkId: String) {
+        val (_, plain) = open(packet) ?: return
+        if (plain.size != Int.SIZE_BYTES) return
         if (!markSeen(packet)) return
+        noteLink(packet, linkId)
         val acked = ByteBuffer.wrap(plain).int
         val target = _messages.value.firstOrNull {
             it.outgoing && it.messageId == acked && it.peerId == packet.senderId
@@ -339,19 +435,9 @@ class MeshMessenger(
         }
     }
 
-    private suspend fun onMessage(packet: Packet) {
-        val key = keyFor(packet.senderId)
-        if (key == null) {
-            // Cannot happen with a well-behaved sender (it exchanges keys first); ask for theirs and drop.
-            MeshLog.e("${packet.type} from ${packet.senderId.take(6)} dropped: no key yet, requesting it")
-            scope.launch { sendKeyPacket(packet.senderId, request = true) }
-            return
-        }
-        val plain = Crypto.open(key, packet.payload, packet.aad())
-        if (plain == null) {
-            MeshLog.e("${packet.type} from ${nameOf(packet.senderId)} dropped: authentication failed")
-            return
-        }
+    private fun onMessage(packet: Packet, linkId: String) {
+        val (_, plain) = open(packet) ?: return
+        noteLink(packet, linkId)
         // Only authenticated packets enter the seen-cache, so forged ones cannot suppress real messages.
         if (markSeen(packet)) {
             val text = plain.toString(Charsets.UTF_8)
@@ -391,10 +477,10 @@ class MeshMessenger(
     }
 
     private suspend fun sendAck(original: Packet) {
-        val key = keyFor(original.senderId) ?: return
+        val session = sessions.sendSession(original.senderId) ?: return
         val ackId = random.nextInt()
-        val sealed = Crypto.seal(
-            key, ByteBuffer.allocate(Int.SIZE_BYTES).putInt(original.messageId).array(),
+        val sealed = Sealed.seal(
+            session, ByteBuffer.allocate(Int.SIZE_BYTES).putInt(original.messageId).array(),
             Packet.aad(PacketType.ACK, localNodeId, original.senderId, ackId)
         )
         val ack = Packet(PacketType.ACK, localNodeId, original.senderId, ackId, sealed)
@@ -410,12 +496,21 @@ class MeshMessenger(
 
     // ---------------------------------------------------------------- neighbour discovery
 
-    private fun onHello(packet: Packet) {
-        val entries = HelloPayload.decode(packet.payload)
+    private fun onHello(packet: Packet, linkId: String) {
+        val (session, plain) = open(packet) ?: return
+        if (plain.size < Int.SIZE_BYTES) return
+        val seq = ByteBuffer.wrap(plain, 0, Int.SIZE_BYTES).int.toLong() and 0xFFFFFFFFL
+        if (seq <= session.helloSeqIn) {
+            MeshLog.e("HELLO from ${nameOf(packet.senderId)} dropped: replayed (seq $seq)")
+            return
+        }
+        session.helloSeqIn = seq
+        val entries = HelloPayload.decode(plain.copyOfRange(Int.SIZE_BYTES, plain.size))
         if (entries == null) {
             MeshLog.e("Malformed HELLO from ${packet.senderId.take(6)}")
             return
         }
+        noteLink(packet, linkId)
         routing.update(packet.senderId, entries, localNodeId)
         _routes.value = routing.snapshot()
         MeshLog.d("HELLO from ${nameOf(packet.senderId)}: ${entries.size} neighbour(s)")
@@ -424,24 +519,26 @@ class MeshMessenger(
     /**
      * Announces our neighbours to each neighbour: shortly after the set changes, then roughly every
      * minute. Both delays are randomised, otherwise phones started together keep sending in lockstep and
-     * their connections collide. HELLOs are background traffic: low priority (never delaying chat or
-     * ACKs); a target skipped because the radio was busy is retried on the next tick.
+     * their connections collide. HELLOs are sealed and authenticated by the session with that neighbour (a
+     * neighbour without a session first gets a handshake), low priority (never delaying chat or ACKs), and
+     * retried on the next tick if the radio was busy.
      */
     private suspend fun helloLoop() {
         var lastIds = emptySet<String>()
         var nextPeriodicAt = Long.MAX_VALUE
         var changeAt: Long? = null
         var elapsed = 0L
-        val skipped = mutableSetOf<String>()
         while (scope.isActive) {
             delay(TICK_MS)
             elapsed += TICK_MS
+            sessions.expire()
+            refreshSecurePeers()
             _routes.value = routing.snapshot() // also publishes expiries
             val peers = transport.discoveredPeers.value
             if (transport.state.value != TransportState.ACTIVE || peers.isEmpty()) {
                 lastIds = emptySet()
                 changeAt = null
-                skipped.clear()
+                helloPending.clear()
                 continue
             }
             val ids = peers.map { it.id }.toSet()
@@ -452,21 +549,27 @@ class MeshMessenger(
             if ((changeAt != null && elapsed >= changeAt) || elapsed >= nextPeriodicAt) {
                 changeAt = null
                 nextPeriodicAt = elapsed + HELLO_INTERVAL_MS + random.nextLong(-HELLO_JITTER_MS, HELLO_JITTER_MS + 1)
-                skipped.addAll(ids)
+                helloPending.addAll(ids)
             }
-            for (target in peers.filter { it.id in skipped }) {
+            for (target in peers.filter { it.id in helloPending }) {
+                val session = sessions.sendSession(target.id)
+                if (session == null) {
+                    requestSessionInBackground(target.id) // stays pending until the session exists
+                    continue
+                }
                 val others = peers.filter { it.id != target.id }
                     .map { NodeAdvertisement.Info(it.id, it.displayName) }
-                val hello = Packet(
-                    PacketType.HELLO, localNodeId, target.id, random.nextInt(),
-                    HelloPayload.encode(others), ttl = 1
-                )
+                val messageId = random.nextInt()
+                val seq = ++session.helloSeqOut
+                val plain = ByteBuffer.allocate(Int.SIZE_BYTES).putInt(seq.toInt()).array() + HelloPayload.encode(others)
+                val sealed = Sealed.seal(session, plain, Packet.aad(PacketType.HELLO, localNodeId, target.id, messageId))
+                val hello = Packet(PacketType.HELLO, localNodeId, target.id, messageId, sealed, ttl = 1)
                 MeshLog.d("HELLO -> ${target.displayName} [${target.id.take(6)}] (${others.size} neighbour(s))")
-                val result = transport.send(target.id, hello.encode(), lowPriority = true)
+                val result = transport.send(target.id, hello.encode(), SendOptions(lowPriority = true, viaLink = hintFor(target.id)))
                 // Busy: keep it queued for the next tick. Any other outcome: wait for the next round.
-                if (result.exceptionOrNull() !is TransportBusyException) skipped.remove(target.id)
+                if (result.exceptionOrNull() !is TransportBusyException) helloPending.remove(target.id)
             }
-            skipped.retainAll(ids)
+            helloPending.retainAll(ids)
         }
     }
 

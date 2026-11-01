@@ -2,14 +2,15 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.4.0** - phones discover each other, exchange **end-to-end encrypted** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
+**Status: v0.5.0** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
 
-## Features (v0.4.0)
+## Features (v0.5.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Identity key pair per install; the node ID is derived from the public key, so peers are recognised even when BLE addresses rotate and an ID cannot be claimed by someone without the key.
-- End-to-end encryption (ECDH P-256, HKDF-SHA256, AES-256-GCM): relays and eavesdroppers cannot read or alter messages, and delivery receipts cannot be forged. See [docs/SECURITY.md](docs/SECURITY.md).
+- End-to-end encryption with **forward secrecy**: a signed ephemeral ECDH handshake (P-256, ECDSA, HKDF-SHA256) gives each pair of nodes AES-256-GCM session keys that live in memory only and are replaced every hour or 500 messages. Relays and eavesdroppers cannot read or alter messages, delivery receipts and neighbour announcements (HELLO) cannot be forged or replayed. See [docs/SECURITY.md](docs/SECURITY.md).
 - Foreground service: the radio keeps working with the screen off or the app closed (notification with a *Stop radio* action).
+- Reliable links: replies travel back on the connection that carried the request (GATT notifications), so a direct exchange needs one connection instead of several; unacknowledged messages are sent again; a watchdog restarts a scan or advertisement that silently died.
 - Persistent chat history (message text encrypted at rest with the Android Keystore) with a CLEAR button.
 - Live list of nodes: direct ones with signal strength (RSSI, dBm), indirect ones as `via <neighbour>`.
 - Multi-hop relay with TTL and duplicate suppression; delivery ACKs travel back across the relays.
@@ -83,17 +84,16 @@ com.nodewave.mesh
 ├── NodeWaveApp.kt         application: holds the process-wide MeshEngine
 ├── MeshEngine.kt          identity, storage, transport and messenger
 ├── RadioService.kt        foreground service that keeps the radio alive
-├── crypto/                Crypto (ECDH, HKDF, AES-GCM), LocalIdentity, Hkdf - pure JVM
+├── crypto/                Crypto (ECDH, ECDSA, AES-GCM), SessionManager (handshake, sessions, rotation), Sealed, HandshakeMessage, LocalIdentity - pure JVM
 ├── data/                  stores (SQLite), Keystore cipher, interfaces
 ├── protocol/
 │   ├── Packet.kt              24-byte header wire format (MESSAGE / PING / ACK / HELLO / KEY)
-│   ├── KeyPayload.kt          public-key exchange payload
 │   ├── Router.kt              next-hop selection (direct, route, flood)
 │   ├── RoutingTable.kt        routes learned from neighbours' HELLOs
 │   ├── HelloPayload.kt        neighbour list carried by HELLO
 │   ├── NodeAdvertisement.kt   node ID + name in the BLE scan response
 │   ├── NodeIdentity.kt        persisted stable node ID
-│   └── MeshMessenger.kt       key exchange, sealing, relay, seen-cache, ACKs, HELLOs, history
+│   └── MeshMessenger.kt       handshakes, sealing, relay, seen-cache, ACKs and resends, HELLOs, history
 └── transport/
     ├── MeshTransport.kt   hardware-agnostic radio contract
     ├── BleTransport.kt    pure-BLE implementation
@@ -104,7 +104,7 @@ The UI never touches radio APIs; everything goes through `MeshTransport`, and `M
 
 ## Roadmap
 
-- **v0.5.0** - to be planned (ideas: forward secrecy and key rotation, authenticated HELLOs, signed release builds for F-Droid).
+- **v0.6.0** - to be planned (ideas: signed release builds for F-Droid, node-ID verification by QR code, group messages).
 
 ## Tests
 

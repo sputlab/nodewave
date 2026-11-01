@@ -75,7 +75,7 @@ class PacketTest {
 
     @Test
     fun olderProtocolVersionsAreRejected() {
-        for (old in 1..2) {
+        for (old in 1..3) {
             val bytes = Packet(PacketType.MESSAGE, sender, dest, 1).encode()
             bytes[0] = old.toByte()
             assertNull(Packet.decode(bytes))
@@ -83,7 +83,7 @@ class PacketTest {
     }
 
     @Test
-    fun protocolVersionIsThree() = assertEquals(3, Packet.VERSION)
+    fun protocolVersionIsFour() = assertEquals(4, Packet.VERSION)
 
     @Test
     fun unknownTypeIsRejected() {
@@ -99,9 +99,9 @@ class PacketTest {
 
     @Test
     fun keyPacketTypeRoundTrips() {
-        val decoded = Packet.decode(Packet(PacketType.KEY, sender, dest, 3, ByteArray(66)).encode())!!
+        val decoded = Packet.decode(Packet(PacketType.KEY, sender, dest, 3, ByteArray(195)).encode())!!
         assertEquals(PacketType.KEY, decoded.type)
-        assertEquals(66, decoded.payload.size)
+        assertEquals(195, decoded.payload.size)
     }
 
     @Test

@@ -9,6 +9,7 @@ import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.SecureRandom
+import java.security.Signature
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECFieldFp
 import java.security.spec.ECGenParameterSpec
@@ -23,9 +24,9 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * End-to-end crypto primitives built only from the standard JCA (no third-party code):
- * - identity: ECDSA-curve P-256 key pair; the node ID is the first 8 bytes of SHA-256(public key),
+ * - identity: P-256 key pair used to *sign*; the node ID is the first 8 bytes of SHA-256(public key),
  *   so an ID can only be claimed by the holder of the matching key (self-certifying);
- * - key agreement: ECDH P-256, then HKDF-SHA256 bound to both node IDs, giving a 256-bit pair key;
+ * - key agreement: ephemeral ECDH P-256 authenticated by ECDSA signatures (see [SessionManager]);
  * - messages: AES-256-GCM with a random 96-bit nonce and the packet header fields as AAD.
  */
 object Crypto {
@@ -33,6 +34,7 @@ object Crypto {
     private const val COORD_BYTES = 32
 
     const val PUBLIC_KEY_BYTES = 1 + 2 * COORD_BYTES // X9.62 uncompressed point
+    const val SIGNATURE_BYTES = 2 * COORD_BYTES
     const val NONCE_BYTES = 12
     const val TAG_BYTES = 16
     /** Bytes added to a plaintext by [seal]. */
@@ -76,19 +78,70 @@ object Crypto {
     fun nodeIdOf(publicKey: ByteArray): String =
         Hex.encode(MessageDigest.getInstance("SHA-256").digest(publicKey).copyOf(8))
 
-    /**
-     * 32-byte symmetric key shared with the node owning [theirPublic], or null if that key is invalid.
-     * Both sides compute the same key; the info string binds it to the (unordered) pair of node IDs.
-     */
-    fun sharedKey(myPrivate: PrivateKey, theirPublic: ByteArray, myId: String, theirId: String): ByteArray? {
+    /** Raw ECDH shared secret (32 bytes) with [theirPublic], or null if that key is not a valid P-256 point. */
+    fun ecdh(myPrivate: PrivateKey, theirPublic: ByteArray): ByteArray? {
         val pub = decodePublic(theirPublic) ?: return null
-        val secret = KeyAgreement.getInstance("ECDH").run {
+        return KeyAgreement.getInstance("ECDH").run {
             init(myPrivate)
             doPhase(pub, true)
             generateSecret()
         }
-        val info = "NodeWave/v1/e2e/" + listOf(myId, theirId).sorted().joinToString("/")
-        return Hkdf.derive(secret, ByteArray(0), info.toByteArray(Charsets.UTF_8), 32)
+    }
+
+    /** ECDSA P-256 / SHA-256 signature as fixed-size `r || s` (64 bytes). */
+    fun sign(privateKey: PrivateKey, data: ByteArray): ByteArray {
+        val der = Signature.getInstance("SHA256withECDSA").run {
+            initSign(privateKey)
+            update(data)
+            sign()
+        }
+        return derToRaw(der)
+    }
+
+    fun verify(publicKey: ECPublicKey, data: ByteArray, signature: ByteArray): Boolean {
+        if (signature.size != SIGNATURE_BYTES) return false
+        return runCatching {
+            Signature.getInstance("SHA256withECDSA").run {
+                initVerify(publicKey)
+                update(data)
+                verify(rawToDer(signature))
+            }
+        }.getOrDefault(false)
+    }
+
+    /** DER `SEQUENCE { INTEGER r, INTEGER s }` -> 64 bytes. */
+    internal fun derToRaw(der: ByteArray): ByteArray {
+        var i = 0
+        fun byte() = der[i++].toInt() and 0xFF
+        require(byte() == 0x30) { "not a DER sequence" }
+        var len = byte()
+        if (len == 0x81) len = byte()
+        val out = ByteArray(SIGNATURE_BYTES)
+        for (part in 0..1) {
+            require(byte() == 0x02) { "not a DER integer" }
+            val n = byte()
+            var start = i
+            var size = n
+            while (size > COORD_BYTES && der[start].toInt() == 0) { start++; size-- }
+            require(size <= COORD_BYTES) { "integer too large" }
+            der.copyInto(out, part * COORD_BYTES + (COORD_BYTES - size), start, start + size)
+            i += n
+        }
+        return out
+    }
+
+    /** 64 bytes `r || s` -> DER. */
+    internal fun rawToDer(raw: ByteArray): ByteArray {
+        fun integer(bytes: ByteArray): ByteArray {
+            var start = 0
+            while (start < bytes.size - 1 && bytes[start].toInt() == 0) start++
+            val body = bytes.copyOfRange(start, bytes.size)
+            val padded = if (body[0].toInt() < 0) byteArrayOf(0) + body else body
+            return byteArrayOf(0x02, padded.size.toByte()) + padded
+        }
+        val r = integer(raw.copyOfRange(0, COORD_BYTES))
+        val s2 = integer(raw.copyOfRange(COORD_BYTES, SIGNATURE_BYTES))
+        return byteArrayOf(0x30, (r.size + s2.size).toByte()) + r + s2
     }
 
     /** Returns `nonce || ciphertext || tag`. [aad] is authenticated but not encrypted. */
