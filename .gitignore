@@ -1,0 +1,28 @@
+# Gradle / build
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local config
+local.properties
+*.iml
+.idea/
+.DS_Store
+
+# Android / signing
+*.apk
+*.aab
+*.ap_
+*.dex
+*.jks
+*.keystore
+bin/
+gen/
+out/
+proguard/
+lint-results*.xml
+hs_err_pid*
