@@ -55,6 +55,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -75,6 +76,10 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         /** Manufacturer id 0xFFFF = reserved for testing; carries node ID + name in the scan response. */
         private const val MANUFACTURER_ID = 0xFFFF
         private const val OP_TIMEOUT_MS = 5000L
+        /** Background (low-priority) sends give up on a stuck step sooner, to free the radio. */
+        private const val LOW_PRIORITY_STEP_TIMEOUT_MS = 2000L
+        private const val SEND_ATTEMPTS = 2
+        private const val SEND_RETRY_DELAY_MS = 400L
         private const val MTU_TIMEOUT_MS = 2000L
         private const val DISCONNECT_TIMEOUT_MS = 1000L
         private const val PEER_TTL_MS = 15_000L
@@ -383,23 +388,58 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
 
     // ---------------------------------------------------------------- sending (GATT client)
 
-    override suspend fun send(targetPeerId: String, payload: ByteArray): Result<Unit> =
-        sendMutex.withLock {
-            if (_state.value != TransportState.ACTIVE) {
-                MeshLog.e("send() rejected: transport state is ${_state.value}")
-                return@withLock Result.failure(IllegalStateException("Transport not ACTIVE"))
-            }
-            if (!hasRequiredPermissions()) {
-                setState(TransportState.ERROR_MISSING_PERMISSIONS)
-                return@withLock Result.failure(SecurityException("Missing BLE runtime permissions"))
-            }
-            val address = addressByNodeId[targetPeerId]
-            if (address == null) {
-                MeshLog.e("send() rejected: peer ${targetPeerId.take(6)} not currently visible")
-                return@withLock Result.failure(IllegalStateException("Peer not visible"))
-            }
-            writeToPeer(address, payload)
+    override suspend fun send(targetPeerId: String, payload: ByteArray, lowPriority: Boolean): Result<Unit> {
+        if (!lowPriority) {
+            return sendMutex.withLock { sendWithRetry(targetPeerId, payload, SEND_ATTEMPTS, OP_TIMEOUT_MS) }
         }
+        if (!sendMutex.tryLock()) {
+            MeshLog.d("Background send to ${describe(targetPeerId)} skipped: radio busy")
+            return Result.failure(TransportBusyException())
+        }
+        try {
+            return sendWithRetry(targetPeerId, payload, 1, LOW_PRIORITY_STEP_TIMEOUT_MS)
+        } finally {
+            sendMutex.unlock()
+        }
+    }
+
+    /** Retries only connection-phase failures (nothing written yet), so a retry can never duplicate a write. */
+    private suspend fun sendWithRetry(
+        targetPeerId: String,
+        payload: ByteArray,
+        attempts: Int,
+        stepTimeoutMs: Long
+    ): Result<Unit> {
+        if (_state.value != TransportState.ACTIVE) {
+            MeshLog.e("send() rejected: transport state is ${_state.value}")
+            return Result.failure(IllegalStateException("Transport not ACTIVE"))
+        }
+        if (!hasRequiredPermissions()) {
+            setState(TransportState.ERROR_MISSING_PERMISSIONS)
+            return Result.failure(SecurityException("Missing BLE runtime permissions"))
+        }
+        val address = addressByNodeId[targetPeerId]
+        if (address == null) {
+            MeshLog.e("send() rejected: peer ${targetPeerId.take(6)} not currently visible")
+            return Result.failure(IllegalStateException("Peer not visible"))
+        }
+        val label = describe(targetPeerId)
+        var result = Result.failure<Unit>(IllegalStateException("no attempt"))
+        for (attempt in 1..attempts) {
+            result = writeToPeer(address, label, payload, stepTimeoutMs)
+            if (result.isSuccess || result.exceptionOrNull() !is TransientLinkException) return result
+            if (attempt < attempts) {
+                MeshLog.d("Link to $label failed (${result.exceptionOrNull()?.message}), retrying")
+                delay(SEND_RETRY_DELAY_MS)
+            }
+        }
+        return result
+    }
+
+    private fun describe(nodeId: String): String {
+        val name = _peers.value.firstOrNull { it.id == nodeId }?.displayName
+        return if (name != null) "$name [${nodeId.take(6)}]" else nodeId.take(6)
+    }
 
     override suspend fun broadcast(payload: ByteArray): Result<Unit> {
         val targets = _peers.value
@@ -415,7 +455,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         else Result.failure(results.firstNotNullOf { it.exceptionOrNull() })
     }
 
-    private suspend fun writeToPeer(address: String, payload: ByteArray): Result<Unit> =
+    private suspend fun writeToPeer(address: String, label: String, payload: ByteArray, stepTimeoutMs: Long): Result<Unit> =
         withContext(Dispatchers.IO) {
             val device = try {
                 bluetoothManager!!.adapter.getRemoteDevice(address)
@@ -430,6 +470,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             val written = CompletableDeferred<Unit>()
             val disconnected = CompletableDeferred<Unit>()
             val mtu = AtomicInteger(23)
+            val writeIssued = AtomicBoolean(false)
 
             fun failAll(e: Throwable) {
                 connected.completeExceptionally(e)
@@ -439,11 +480,13 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
 
             val callback = object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                    MeshLog.d("GATT client $address status=$status state=${stateName(newState)}")
+                    MeshLog.d("GATT client $label status=$status state=${stateName(newState)}")
                     if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                         connected.complete(Unit)
                     } else {
-                        failAll(IOException("GATT link down status=$status"))
+                        val msg = "GATT link down status=$status"
+                        // Before the write is issued the failure is transient and retriable.
+                        failAll(if (writeIssued.get()) IOException(msg) else TransientLinkException(msg))
                         disconnected.complete(Unit)
                     }
                 }
@@ -471,15 +514,15 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                 }
             }
 
-            MeshLog.d("GATT client connecting to $address (${payload.size} bytes)")
+            MeshLog.d("GATT client connecting to $label (${payload.size}B)")
             val gatt = device.connectGatt(appContext, false, callback, BluetoothDevice.TRANSPORT_LE)
                 ?: return@withContext Result.failure(IOException("connectGatt returned null"))
 
             try {
-                awaitStep("connect") { connected.await() }
+                awaitStep("connect", stepTimeoutMs, transient = true) { connected.await() }
 
                 check(gatt.discoverServices()) { "discoverServices rejected" }
-                awaitStep("service discovery") { servicesDiscovered.await() }
+                awaitStep("service discovery", stepTimeoutMs, transient = true) { servicesDiscovered.await() }
 
                 val characteristic = gatt.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID)
                     ?: throw IOException("NodeWave characteristic not found on $address")
@@ -490,29 +533,34 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                 }
 
                 MeshLog.d("GATT client writing characteristic")
+                writeIssued.set(true)
                 check(writeCharacteristic(gatt, characteristic, payload)) { "writeCharacteristic rejected" }
-                awaitStep("write") { written.await() }
+                awaitStep("write", stepTimeoutMs, transient = false) { written.await() }
 
-                MeshLog.d("SENT ${payload.size}B to $address OK")
+                MeshLog.d("SENT ${payload.size}B to $label OK")
                 Result.success(Unit)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                MeshLog.e("SEND to $address failed", e)
+                // Expected radio trouble is one line; anything else keeps its stack trace.
+                if (e is IOException) MeshLog.e("SEND to $label failed: ${e.message}")
+                else MeshLog.e("SEND to $label failed", e)
                 Result.failure(e)
             } finally {
                 withContext(NonCancellable) {
                     runCatching { gatt.disconnect() }
                     withTimeoutOrNull(DISCONNECT_TIMEOUT_MS) { disconnected.await() }
                     runCatching { gatt.close() }
-                    MeshLog.d("GATT client closed $address")
+                    MeshLog.d("GATT client closed $label")
                 }
             }
         }
 
-    private suspend fun <T> awaitStep(name: String, block: suspend () -> T): T =
-        withTimeoutOrNull(OP_TIMEOUT_MS) { block() }
-            ?: throw IOException("Timeout (${OP_TIMEOUT_MS}ms) during $name")
+    private suspend fun <T> awaitStep(name: String, timeoutMs: Long, transient: Boolean, block: suspend () -> T): T =
+        withTimeoutOrNull(timeoutMs) { block() } ?: run {
+            val msg = "Timeout (${timeoutMs}ms) during $name"
+            throw if (transient) TransientLinkException(msg) else IOException(msg)
+        }
 
     @Suppress("DEPRECATION")
     private fun writeCharacteristic(
@@ -538,3 +586,6 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         else -> s.toString()
     }
 }
+
+/** Link-level failure before any data was written: safe to retry. */
+private class TransientLinkException(message: String) : IOException(message)

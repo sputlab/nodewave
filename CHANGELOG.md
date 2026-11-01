@@ -7,6 +7,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 Nothing yet.
 
+## [0.3.1] - 2026-11-01
+
+Radio reliability and log readability, from analysing logs of a three-phone run (Honor, Sony, Mi Note 10).
+
+### Fixed
+- **HELLOs no longer delay chat and ACKs.** They were 83% of all radio sends and shared a single send queue with user traffic: a HELLO stuck for 5 s in service discovery delayed an ACK by 5 s. HELLOs are now low priority: they are skipped (and retried on the next 2 s tick) when the radio is busy, and give up on a stuck step after 2 s instead of 5 s.
+- **Chat messages and ACKs retry once** on transient link failures (GATT status 133/62, connect or discovery timeout). Retries only happen before anything was written, so a retry can never duplicate a write.
+
+### Changed
+- HELLO interval 20 s -> 60 s (sent immediately when the neighbour set changes); routes now live 150 s. About three times less background radio traffic.
+- Radio logs name the node instead of a MAC address (`Mi Note 10 [e24a14]`), HELLO sends are logged as such, and expected radio errors take one line instead of a stack trace.
+- `MeshTransport.send` gained a `lowPriority` flag; low-priority sends fail fast with `TransportBusyException` when the radio is in use.
+
+### Tests
+- 53 unit tests (new: HELLO scheduling and busy-radio retry). The BLE retry itself needs real hardware and is not covered by the JVM suite.
+
 ## [0.3.0] - 2026-11-01
 
 Multi-hop relay: messages now cross intermediate nodes to reach phones that are out of direct range.

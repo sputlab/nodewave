@@ -3,6 +3,7 @@ package com.nodewave.mesh.protocol
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshTransport
 import com.nodewave.mesh.transport.PeerNode
+import com.nodewave.mesh.transport.TransportBusyException
 import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -21,7 +22,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** In-memory radio: a transport can only reach the nodes the test says it can "see". */
-private class FakeNetwork {
+internal class FakeNetwork {
     val transports = mutableMapOf<String, FakeTransport>()
     val deliveries = mutableListOf<Pair<String, String>>() // (from, to) per radio write
 
@@ -37,6 +38,11 @@ private class FakeNetwork {
         private val incoming = MutableSharedFlow<IncomingPayload>(extraBufferCapacity = 256)
         override val incomingPayloads: Flow<IncomingPayload> = incoming.asSharedFlow()
 
+        /** While true, low-priority sends are refused as if the radio were in use. */
+        @Volatile var busy = false
+        val helloSends get() = lowPrioritySends
+        var lowPrioritySends = 0
+
         fun see(other: String) {
             peers.value = (peers.value.filterNot { it.id == other } + PeerNode(other, "N-${other.takeLast(2)}", -50))
                 .sortedBy { it.id }
@@ -44,8 +50,10 @@ private class FakeNetwork {
 
         override suspend fun start(localNodeName: String) = Result.success(Unit)
         override suspend fun stop() {}
-        override suspend fun send(targetPeerId: String, payload: ByteArray): Result<Unit> {
+        override suspend fun send(targetPeerId: String, payload: ByteArray, lowPriority: Boolean): Result<Unit> {
+            if (busy && lowPriority) return Result.failure(TransportBusyException())
             if (peers.value.none { it.id == targetPeerId }) return Result.failure(IllegalStateException("not visible"))
+            if (lowPriority) lowPrioritySends++
             deliveries += id to targetPeerId
             transports.getValue(targetPeerId).incoming.tryEmit(IncomingPayload("ble-$id", payload))
             return Result.success(Unit)
@@ -188,7 +196,7 @@ class MeshNetworkTest {
         val n = build(net, a, b, c)
         net.link(a, b); net.link(b, c)
 
-        advanceTimeBy(25_000)
+        advanceTimeBy(65_000)
 
         val seenByA = n.getValue(a).messenger.nodes.value
         assertEquals(setOf(b, c), seenByA.map { it.id }.toSet())
@@ -203,7 +211,7 @@ class MeshNetworkTest {
         val net = FakeNetwork()
         val n = build(net, a, b, c)
         net.link(a, b); net.link(b, c)
-        advanceTimeBy(25_000)
+        advanceTimeBy(65_000)
         assertEquals(2, n.getValue(a).messenger.nodes.value.size)
 
         net.transports.getValue(a).let { t -> // a loses sight of b
@@ -222,7 +230,7 @@ class MeshNetworkTest {
         val d = id(4)
         val n = build(net, a, b, c, d)
         net.link(a, b); net.link(a, d); net.link(b, c) // c is only behind b; d is a dead end
-        advanceTimeBy(25_000)
+        advanceTimeBy(65_000)
         net.deliveries.clear()
 
         n.getValue(a).messenger.sendText(c, "routed")
@@ -230,5 +238,45 @@ class MeshNetworkTest {
 
         assertEquals("routed", n.getValue(c).received().single().text)
         assertFalse(net.deliveries.contains(a to d)) // no flood towards the dead end
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class HelloSchedulingTest {
+    private fun id(i: Int) = "%016x".format(i)
+    private val a = id(1); private val b = id(2)
+
+    private fun TestScope.pair(): Triple<FakeNetwork, MeshMessenger, MeshMessenger> {
+        val net = FakeNetwork()
+        val ta = net.FakeTransport(a).also { net.transports[a] = it }
+        val tb = net.FakeTransport(b).also { net.transports[b] = it }
+        val ma = MeshMessenger(ta, a, backgroundScope as CoroutineScope)
+        val mb = MeshMessenger(tb, b, backgroundScope as CoroutineScope)
+        net.link(a, b)
+        return Triple(net, ma, mb)
+    }
+
+    @Test
+    fun helloIsSentAtLowPriorityOnDiscoveryThenOnlyEverySixtySeconds() = runTest {
+        val (net, _, _) = pair()
+        advanceTimeBy(3_000)
+        val afterDiscovery = net.transports.getValue(a).lowPrioritySends
+        assertEquals(1, afterDiscovery)
+        advanceTimeBy(50_000)
+        assertEquals(1, net.transports.getValue(a).lowPrioritySends) // not at 20 s anymore
+        advanceTimeBy(12_000)
+        assertEquals(2, net.transports.getValue(a).lowPrioritySends)
+    }
+
+    @Test
+    fun helloSkippedBecauseRadioBusyIsRetriedOnTheNextTick() = runTest {
+        val (net, _, _) = pair()
+        val ta = net.transports.getValue(a)
+        ta.busy = true
+        advanceTimeBy(7_000) // several ticks, all refused
+        assertEquals(0, ta.lowPrioritySends)
+        ta.busy = false
+        advanceTimeBy(3_000)
+        assertEquals(1, ta.lowPrioritySends) // delivered as soon as the radio frees up, not after 60 s
     }
 }

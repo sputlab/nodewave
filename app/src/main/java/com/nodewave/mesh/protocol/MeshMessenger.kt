@@ -3,6 +3,7 @@ package com.nodewave.mesh.protocol
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshLog
 import com.nodewave.mesh.transport.MeshTransport
+import com.nodewave.mesh.transport.TransportBusyException
 import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,8 +47,8 @@ class MeshMessenger(
         private const val ACK_ATTEMPTS = 2
         private const val ACK_RETRY_DELAY_MS = 700L
         private const val TICK_MS = 2_000L
-        private const val HELLO_INTERVAL_MS = 20_000L
-        private const val ROUTE_TTL_MS = 60_000L
+        private const val HELLO_INTERVAL_MS = 60_000L
+        private const val ROUTE_TTL_MS = 150_000L
     }
 
     private val routing = RoutingTable(ROUTE_TTL_MS)
@@ -234,36 +235,46 @@ class MeshMessenger(
         MeshLog.d("HELLO from ${nameOf(packet.senderId)}: ${entries.size} neighbour(s)")
     }
 
-    /** Announces our neighbours to each neighbour when the set changes and every [HELLO_INTERVAL_MS]. */
+    /**
+     * Announces our neighbours to each neighbour when the set changes and every [HELLO_INTERVAL_MS].
+     * HELLOs are background traffic: they are sent at low priority (never delaying chat or ACKs) and a
+     * target skipped because the radio was busy is retried on the next tick.
+     */
     private suspend fun helloLoop() {
         var lastIds = emptySet<String>()
         var lastHelloAt = -HELLO_INTERVAL_MS
         var elapsed = 0L
+        val skipped = mutableSetOf<String>()
         while (scope.isActive) {
             delay(TICK_MS)
             elapsed += TICK_MS
             _routes.value = routing.snapshot() // also publishes expiries
-            if (transport.state.value != TransportState.ACTIVE) {
+            val peers = transport.discoveredPeers.value
+            if (transport.state.value != TransportState.ACTIVE || peers.isEmpty()) {
                 lastIds = emptySet()
+                skipped.clear()
                 continue
             }
-            val peers = transport.discoveredPeers.value
             val ids = peers.map { it.id }.toSet()
-            if (peers.isNotEmpty() && (ids != lastIds || elapsed - lastHelloAt >= HELLO_INTERVAL_MS)) {
+            val due = ids != lastIds || elapsed - lastHelloAt >= HELLO_INTERVAL_MS
+            if (due) {
                 lastIds = ids
                 lastHelloAt = elapsed
-                for (target in peers) {
-                    val others = peers.filter { it.id != target.id }
-                        .map { NodeAdvertisement.Info(it.id, it.displayName) }
-                    val hello = Packet(
-                        PacketType.HELLO, localNodeId, target.id, Random.nextInt(),
-                        HelloPayload.encode(others), ttl = 1
-                    )
-                    transport.send(target.id, hello.encode())
-                }
-            } else if (peers.isEmpty()) {
-                lastIds = emptySet()
+                skipped.addAll(ids)
             }
+            for (target in peers.filter { it.id in skipped }) {
+                val others = peers.filter { it.id != target.id }
+                    .map { NodeAdvertisement.Info(it.id, it.displayName) }
+                val hello = Packet(
+                    PacketType.HELLO, localNodeId, target.id, Random.nextInt(),
+                    HelloPayload.encode(others), ttl = 1
+                )
+                MeshLog.d("HELLO -> ${target.displayName} [${target.id.take(6)}] (${others.size} neighbour(s))")
+                val result = transport.send(target.id, hello.encode(), lowPriority = true)
+                // Busy: keep it queued for the next tick. Any other outcome: wait for the next interval.
+                if (result.exceptionOrNull() !is TransportBusyException) skipped.remove(target.id)
+            }
+            skipped.retainAll(ids)
         }
     }
 

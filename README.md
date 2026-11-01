@@ -2,9 +2,9 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.3.0** - phones discover each other by stable node ID, exchange chat messages with delivery confirmation over pure BLE, and relay messages across intermediate phones (multi-hop). See the [changelog](CHANGELOG.md).
+**Status: v0.3.1** - phones discover each other by stable node ID, exchange chat messages with delivery confirmation over pure BLE, and relay messages across intermediate phones (multi-hop). See the [changelog](CHANGELOG.md).
 
-## Features (v0.3.0)
+## Features (v0.3.1)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Stable per-install node ID, so peers are recognised even when BLE addresses rotate.
@@ -45,10 +45,10 @@ adb -s <serial> logcat -s MESH_RADIO   # with several devices connected
 ## Testing the relay (three phones)
 
 1. Install the same version on all three phones and start the radio on each.
-2. Wait about 20 s: the node list of every phone should show the other two.
+2. Wait a few seconds: the node list of every phone should show the other two (indirect ones appear after the first neighbour announcement).
 3. Phones in the same room all see each other, so force the relay: on the **sender and the receiver** switch on *DEBUG: ignora link diretto*, leaving the third phone as it is.
 4. Send a message from the sender to the receiver. The receiver shows it with `1 relay` and the sender marks it `CONSEGNATO · 1 relay`.
-5. Alternatively, switch Bluetooth off on the relay phone and watch the indirect node disappear.
+5. Alternatively, switch Bluetooth off on the relay phone and watch the indirect node disappear (it can take up to a minute for a stale route to expire if the neighbour announcement was missed).
 
 ## Permissions
 

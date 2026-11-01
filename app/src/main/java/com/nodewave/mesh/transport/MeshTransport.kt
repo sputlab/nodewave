@@ -31,6 +31,13 @@ interface MeshTransport {
 
     suspend fun start(localNodeName: String): Result<Unit>
     suspend fun stop()
-    suspend fun send(targetPeerId: String, payload: ByteArray): Result<Unit>
+    /**
+     * @param lowPriority background traffic (e.g. neighbour announcements): never queues behind or
+     * delays user traffic, fails fast with [TransportBusyException] if the radio is in use.
+     */
+    suspend fun send(targetPeerId: String, payload: ByteArray, lowPriority: Boolean = false): Result<Unit>
     suspend fun broadcast(payload: ByteArray): Result<Unit>
 }
+
+/** A low-priority send was skipped because the radio was busy; safe to retry later. */
+class TransportBusyException : IllegalStateException("Radio busy")
