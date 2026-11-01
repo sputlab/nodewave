@@ -8,7 +8,10 @@ enum class PacketType(val code: Int) {
     ACK(3),
 
     /** One-hop neighbour announcement used to build the reachability table. Never forwarded. */
-    HELLO(4);
+    HELLO(4),
+
+    /** Public-key exchange, routed like a message; see [KeyPayload]. */
+    KEY(5);
 
     companion object {
         fun fromCode(code: Int): PacketType? = entries.firstOrNull { it.code == code }
@@ -16,12 +19,14 @@ enum class PacketType(val code: Int) {
 }
 
 /**
- * Wire format v2 (big-endian), 24-byte header:
+ * Wire format v3 (big-endian), 24-byte header:
  * `[version u8][type u8][ttl u8][hops u8][senderId 8B][destId 8B][messageId i32][payload ...]`
  *
  * `senderId` is the original author and never changes while a packet is relayed; `ttl` is
- * decremented and `hops` incremented by every relay. ACK payload is the 4-byte messageId
- * being acknowledged. (senderId, messageId) uniquely identifies a packet network-wide.
+ * decremented and `hops` incremented by every relay, so they are not authenticated; everything else in
+ * the header is bound into the AES-GCM tag of MESSAGE/PING/ACK payloads through [aad]. MESSAGE and PING
+ * payloads are sealed text, ACK payloads are the sealed 4-byte messageId being acknowledged.
+ * (senderId, messageId) uniquely identifies a packet network-wide.
  */
 class Packet(
     val type: PacketType,
@@ -59,12 +64,8 @@ class Packet(
             .put(payload)
             .array()
 
-    /** For ACK packets: the messageId being acknowledged, otherwise null. */
-    fun ackedMessageId(): Int? =
-        if (type == PacketType.ACK && payload.size == Int.SIZE_BYTES) ByteBuffer.wrap(payload).int else null
-
     companion object {
-        const val VERSION = 2
+        const val VERSION = 3
         const val NODE_ID_BYTES = 8
         const val NODE_ID_HEX_LENGTH = NODE_ID_BYTES * 2
         const val HEADER_SIZE = 4 + NODE_ID_BYTES * 2 + Int.SIZE_BYTES
@@ -85,10 +86,20 @@ class Packet(
             return Packet(type, Hex.encode(sender), Hex.encode(dest), messageId, payload, ttl, hops)
         }
 
-        fun ack(localNodeId: String, destId: String, newMessageId: Int, ackedMessageId: Int): Packet =
-            Packet(
-                PacketType.ACK, localNodeId, destId, newMessageId,
-                ByteBuffer.allocate(Int.SIZE_BYTES).putInt(ackedMessageId).array()
-            )
+        /**
+         * Additional authenticated data for sealing a payload: the header fields a relay never changes.
+         * Binding them stops a relay from replaying a payload under another type, sender, recipient or id.
+         */
+        fun aad(type: PacketType, senderId: String, destId: String, messageId: Int): ByteArray =
+            ByteBuffer.allocate(2 + NODE_ID_BYTES * 2 + Int.SIZE_BYTES)
+                .put(VERSION.toByte())
+                .put(type.code.toByte())
+                .put(Hex.decode(senderId))
+                .put(Hex.decode(destId))
+                .putInt(messageId)
+                .array()
     }
+
+    /** [aad] of this packet. */
+    fun aad(): ByteArray = aad(type, senderId, destId, messageId)
 }

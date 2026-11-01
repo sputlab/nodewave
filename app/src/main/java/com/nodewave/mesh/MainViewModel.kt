@@ -1,33 +1,28 @@
 package com.nodewave.mesh
 
 import android.app.Application
-import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
 import com.nodewave.mesh.protocol.ChatMessage
-import com.nodewave.mesh.protocol.MeshMessenger
 import com.nodewave.mesh.protocol.NodeEntry
-import com.nodewave.mesh.protocol.NodeIdentity
-import com.nodewave.mesh.transport.BleTransport
 import com.nodewave.mesh.transport.MeshLog
-import com.nodewave.mesh.transport.MeshTransport
 import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
+/** Thin UI adapter: the radio lives in [MeshEngine] / [RadioService], not in the view model. */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    val localNodeId: String = NodeIdentity.getOrCreate(application)
-    val localNodeName: String = Build.MODEL
+    private val engine = (application as NodeWaveApp).engine
+    private val messenger = engine.messenger
 
-    private val transport: MeshTransport = BleTransport(application, localNodeId)
-    private val messenger = MeshMessenger(transport, localNodeId, viewModelScope)
+    val localNodeId: String = engine.identity.nodeId
+    val localNodeName: String = engine.localNodeName
 
-    val transportState: StateFlow<TransportState> = transport.state
+    val transportState: StateFlow<TransportState> = engine.transport.state
     val nodes: StateFlow<List<NodeEntry>> = messenger.nodes
+    val keyedPeers: StateFlow<Set<String>> = messenger.keyedPeers
     val ignoreDirect: StateFlow<Boolean> = messenger.ignoreDirect
     val messages: StateFlow<List<ChatMessage>> = messenger.messages
     val logLines: StateFlow<List<String>> = MeshLog.lines
@@ -35,16 +30,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedPeerId = MutableStateFlow<String?>(null)
     val selectedPeerId: StateFlow<String?> = _selectedPeerId.asStateFlow()
 
-    init {
-        MeshLog.d("Local node ${localNodeId.take(6)} ($localNodeName)")
-    }
-
+    /** Requires the Bluetooth runtime permissions to be granted already. */
     fun startRadio() {
-        viewModelScope.launch { transport.start(localNodeName) }
+        ContextCompat.startForegroundService(getApplication(), RadioService.startIntent(getApplication()))
     }
 
     fun stopRadio() {
-        viewModelScope.launch { transport.stop() }
+        getApplication<Application>().startService(RadioService.stopIntent(getApplication()))
     }
 
     fun setIgnoreDirect(enabled: Boolean) = messenger.setIgnoreDirect(enabled)
@@ -69,7 +61,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (trimmed.isNotEmpty()) messenger.broadcastText(trimmed)
     }
 
-    override fun onCleared() {
-        runBlocking { transport.stop() }
-    }
+    fun clearHistory() = messenger.clearHistory()
 }

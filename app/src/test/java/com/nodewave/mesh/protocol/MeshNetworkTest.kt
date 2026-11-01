@@ -1,303 +1,461 @@
 package com.nodewave.mesh.protocol
 
-import com.nodewave.mesh.transport.IncomingPayload
-import com.nodewave.mesh.transport.MeshTransport
-import com.nodewave.mesh.transport.PeerNode
-import com.nodewave.mesh.transport.TransportBusyException
-import com.nodewave.mesh.transport.TransportState
-import kotlinx.coroutines.CoroutineScope
+import com.nodewave.mesh.crypto.Crypto
+import com.nodewave.mesh.crypto.LocalIdentity
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-
-/** In-memory radio: a transport can only reach the nodes the test says it can "see". */
-internal class FakeNetwork {
-    val transports = mutableMapOf<String, FakeTransport>()
-    val deliveries = mutableListOf<Pair<String, String>>() // (from, to) per radio write
-
-    fun link(a: String, b: String) {
-        transports.getValue(a).see(b)
-        transports.getValue(b).see(a)
-    }
-
-    inner class FakeTransport(val id: String) : MeshTransport {
-        override val state = MutableStateFlow(TransportState.ACTIVE)
-        private val peers = MutableStateFlow<List<PeerNode>>(emptyList())
-        override val discoveredPeers: StateFlow<List<PeerNode>> = peers
-        private val incoming = MutableSharedFlow<IncomingPayload>(extraBufferCapacity = 256)
-        override val incomingPayloads: Flow<IncomingPayload> = incoming.asSharedFlow()
-
-        /** While true, low-priority sends are refused as if the radio were in use. */
-        @Volatile var busy = false
-        val helloSends get() = lowPrioritySends
-        var lowPrioritySends = 0
-
-        fun see(other: String) {
-            peers.value = (peers.value.filterNot { it.id == other } + PeerNode(other, "N-${other.takeLast(2)}", -50))
-                .sortedBy { it.id }
-        }
-
-        override suspend fun start(localNodeName: String) = Result.success(Unit)
-        override suspend fun stop() {}
-        override suspend fun send(targetPeerId: String, payload: ByteArray, lowPriority: Boolean): Result<Unit> {
-            if (busy && lowPriority) return Result.failure(TransportBusyException())
-            if (peers.value.none { it.id == targetPeerId }) return Result.failure(IllegalStateException("not visible"))
-            if (lowPriority) lowPrioritySends++
-            deliveries += id to targetPeerId
-            transports.getValue(targetPeerId).incoming.tryEmit(IncomingPayload("ble-$id", payload))
-            return Result.success(Unit)
-        }
-        override suspend fun broadcast(payload: ByteArray) = Result.success(Unit)
-    }
-}
+import java.nio.ByteBuffer
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MeshNetworkTest {
-    private fun id(i: Int) = "%016x".format(i)
-    private val a = id(1); private val b = id(2); private val c = id(3)
 
-    private class Node(val id: String, val messenger: MeshMessenger)
-
-    private fun TestScope.build(net: FakeNetwork, vararg ids: String): Map<String, Node> =
-        ids.associateWith { nid ->
-            val t = net.FakeTransport(nid).also { net.transports[nid] = it }
-            Node(nid, MeshMessenger(t, nid, backgroundScope as CoroutineScope))
-        }
-
-    /** Lets queued sends/relays/ACKs run, but stays below the 2 s tick of the HELLO loop. */
-    private fun TestScope.settle() {
-        advanceTimeBy(1_000)
-        runCurrent()
-    }
-
-    private fun Node.received() = messenger.messages.value.filter { !it.outgoing }
-    private fun Node.sent() = messenger.messages.value.filter { it.outgoing }
+    // ------------------------------------------------------------ delivery and relay
 
     @Test
     fun directMessageIsDeliveredAndAcked() = runTest {
         val net = FakeNetwork()
-        val n = build(net, a, b)
-        net.link(a, b)
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
 
-        n.getValue(a).messenger.sendText(b, "ciao")
+        a.messenger.sendText(b.id, "ciao")
         settle()
 
-        assertEquals("ciao", n.getValue(b).received().single().text)
-        assertEquals(0, n.getValue(b).received().single().hops)
-        assertEquals(MessageStatus.DELIVERED, n.getValue(a).sent().single().status)
+        assertEquals("ciao", b.received().single().text)
+        assertEquals(0, b.received().single().hops)
+        assertEquals(MessageStatus.DELIVERED, a.sent().single().status)
     }
 
     @Test
     fun messageCrossesARelayWhenDestinationIsNotInRange() = runTest {
         val net = FakeNetwork()
-        val n = build(net, a, b, c)
-        net.link(a, b); net.link(b, c) // a and c cannot see each other
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id) // a and c cannot see each other
 
-        n.getValue(a).messenger.sendText(c, "via b")
+        a.messenger.sendText(c.id, "via b")
         settle()
 
-        val got = n.getValue(c).received().single()
+        val got = c.received().single()
         assertEquals("via b", got.text)
         assertEquals(1, got.hops)
-        assertEquals(a, got.peerId) // author preserved across the relay
-        val ack = n.getValue(a).sent().single()
-        assertEquals(MessageStatus.DELIVERED, ack.status)
-        assertEquals(1, ack.hops)
-        assertTrue(n.getValue(b).received().isEmpty()) // the relay does not show it as its own
+        assertEquals(a.id, got.peerId) // author preserved across the relay
+        assertEquals(MessageStatus.DELIVERED, a.sent().single().status)
+        assertEquals(1, a.sent().single().hops)
+        assertTrue(b.received().isEmpty()) // the relay does not show it as its own
     }
 
     @Test
     fun debugIgnoreDirectForcesTheRelayEvenWhenEveryoneIsInRange() = runTest {
         val net = FakeNetwork()
-        val n = build(net, a, b, c)
-        net.link(a, b); net.link(b, c); net.link(a, c)
-        n.getValue(a).messenger.setIgnoreDirect(true)
-        n.getValue(c).messenger.setIgnoreDirect(true)
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id); net.link(a.id, c.id)
+        a.messenger.setIgnoreDirect(true)
+        c.messenger.setIgnoreDirect(true)
 
-        n.getValue(a).messenger.sendText(c, "forced")
+        a.messenger.sendText(c.id, "forced")
         settle()
 
-        assertEquals(1, n.getValue(c).received().single().hops)
-        assertEquals(MessageStatus.DELIVERED, n.getValue(a).sent().single().status)
-        assertFalse(net.deliveries.contains(a to c)) // never went straight over the a-c link
-        assertFalse(net.deliveries.contains(c to a))
-        assertTrue(net.deliveries.contains(a to b) && net.deliveries.contains(b to c))
+        assertEquals(1, c.received().single().hops)
+        assertEquals(MessageStatus.DELIVERED, a.sent().single().status)
+        assertFalse(net.deliveries.contains(a.id to c.id)) // never went straight over the a-c link
+        assertFalse(net.deliveries.contains(c.id to a.id))
+        assertTrue(net.deliveries.contains(a.id to b.id) && net.deliveries.contains(b.id to c.id))
     }
 
     @Test
     fun withoutDebugFlagTheDirectLinkIsPreferred() = runTest {
         val net = FakeNetwork()
-        val n = build(net, a, b, c)
-        net.link(a, b); net.link(b, c); net.link(a, c)
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id); net.link(a.id, c.id)
 
-        n.getValue(a).messenger.sendText(c, "direct")
+        a.messenger.sendText(c.id, "direct")
         settle()
 
-        assertEquals(0, n.getValue(c).received().single().hops)
-        assertFalse(net.deliveries.contains(a to b))
+        assertEquals(0, c.received().single().hops)
+        assertFalse(net.deliveries.contains(a.id to b.id))
     }
 
     @Test
     fun floodingInAFullMeshDeliversExactlyOnce() = runTest {
         val net = FakeNetwork()
-        val d = id(4)
-        val n = build(net, a, b, c, d)
-        listOf(a to b, a to c, a to d, b to c, b to d, c to d).forEach { net.link(it.first, it.second) }
-        n.getValue(a).messenger.setIgnoreDirect(true)
+        val nodes = List(4) { node(net) }
+        for (i in nodes.indices) for (j in i + 1 until nodes.size) net.link(nodes[i].id, nodes[j].id)
+        nodes[0].messenger.setIgnoreDirect(true)
 
-        n.getValue(a).messenger.sendText(d, "once")
+        nodes[0].messenger.sendText(nodes[3].id, "once")
         settle()
 
-        assertEquals(1, n.getValue(d).received().size)
-        assertTrue(n.getValue(b).received().isEmpty() && n.getValue(c).received().isEmpty())
+        assertEquals(1, nodes[3].received().size)
+        assertTrue(nodes[1].received().isEmpty() && nodes[2].received().isEmpty())
     }
 
     @Test
     fun ttlStopsPacketsBeyondTheirReach() = runTest {
         val net = FakeNetwork()
-        val ids = (1..7).map { id(it) } // chain of 7 nodes = 6 links
-        val n = build(net, *ids.toTypedArray())
-        ids.zipWithNext().forEach { net.link(it.first, it.second) }
+        val chain = List(7) { node(net) } // 6 links
+        chain.zipWithNext().forEach { net.link(it.first.id, it.second.id) }
 
-        n.getValue(ids[0]).messenger.sendText(ids[5], "five links") // reachable with TTL 5
-        n.getValue(ids[0]).messenger.sendText(ids[6], "six links")  // out of reach
+        chain[0].messenger.sendText(chain[5].id, "five links") // reachable with TTL 5
+        chain[0].messenger.sendText(chain[6].id, "six links")  // out of reach
         settle()
 
-        assertEquals("five links", n.getValue(ids[5]).received().single().text)
-        assertTrue(n.getValue(ids[6]).received().isEmpty())
+        assertEquals("five links", chain[5].received().single().text)
+        assertTrue(chain[6].received().isEmpty())
     }
 
     @Test
     fun undeliverableMessageIsMarkedFailed() = runTest {
         val net = FakeNetwork()
-        val n = build(net, a, b)
-        // a sees nobody
+        val a = node(net); val b = node(net) // a sees nobody
 
-        n.getValue(a).messenger.sendText(b, "nobody home")
+        a.messenger.sendText(b.id, "nobody home")
         settle()
 
-        assertEquals(MessageStatus.FAILED, n.getValue(a).sent().single().status)
+        assertEquals(MessageStatus.FAILED, a.sent().single().status)
     }
+
+    @Test
+    fun textAtTheLimitIsDeliveredAndOneByteMoreIsRefused() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+
+        a.messenger.sendText(b.id, "x".repeat(MeshMessenger.MAX_TEXT_BYTES))
+        a.messenger.sendText(b.id, "x".repeat(MeshMessenger.MAX_TEXT_BYTES + 1))
+        settle()
+
+        assertEquals(1, a.sent().size)
+        assertEquals(MeshMessenger.MAX_TEXT_BYTES, b.received().single().text.length)
+        // every packet must fit one BLE write at the negotiated MTU (247 - 3)
+        assertTrue(net.wire.all { it.size <= 244 })
+        assertTrue(Packet.HEADER_SIZE + Crypto.SEAL_OVERHEAD + MeshMessenger.MAX_TEXT_BYTES <= 244)
+    }
+
+    // ------------------------------------------------------------ neighbour discovery
 
     @Test
     fun helloLetsANodeDiscoverIndirectNeighbours() = runTest {
         val net = FakeNetwork()
-        val n = build(net, a, b, c)
-        net.link(a, b); net.link(b, c)
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id)
 
         advanceTimeBy(65_000)
 
-        val seenByA = n.getValue(a).messenger.nodes.value
-        assertEquals(setOf(b, c), seenByA.map { it.id }.toSet())
-        val viaB = seenByA.first { it.id == c }
-        assertEquals(b, viaB.viaId)
+        val seenByA = a.messenger.nodes.value
+        assertEquals(setOf(b.id, c.id), seenByA.map { it.id }.toSet())
+        val viaB = seenByA.first { it.id == c.id }
+        assertEquals(b.id, viaB.viaId)
         assertFalse(viaB.isDirect)
-        assertTrue(seenByA.first { it.id == b }.isDirect)
+        assertTrue(seenByA.first { it.id == b.id }.isDirect)
     }
 
     @Test
     fun indirectNodeDisappearsWhenItsRelayIsLost() = runTest {
         val net = FakeNetwork()
-        val n = build(net, a, b, c)
-        net.link(a, b); net.link(b, c)
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id)
         advanceTimeBy(65_000)
-        assertEquals(2, n.getValue(a).messenger.nodes.value.size)
+        assertEquals(2, a.messenger.nodes.value.size)
 
-        net.transports.getValue(a).let { t -> // a loses sight of b
-            val field = t.javaClass.getDeclaredField("peers").apply { isAccessible = true }
-            @Suppress("UNCHECKED_CAST")
-            (field.get(t) as MutableStateFlow<List<PeerNode>>).value = emptyList()
-        }
+        a.transport.forgetAll() // a loses sight of b
         advanceTimeBy(3_000)
 
-        assertTrue(n.getValue(a).messenger.nodes.value.isEmpty())
+        assertTrue(a.messenger.nodes.value.isEmpty())
     }
 
     @Test
     fun routedSendUsesTheLearnedViaNeighbourInsteadOfFlooding() = runTest {
         val net = FakeNetwork()
-        val d = id(4)
-        val n = build(net, a, b, c, d)
-        net.link(a, b); net.link(a, d); net.link(b, c) // c is only behind b; d is a dead end
+        val a = node(net); val b = node(net); val c = node(net); val d = node(net)
+        net.link(a.id, b.id); net.link(a.id, d.id); net.link(b.id, c.id) // c is only behind b; d is a dead end
         advanceTimeBy(65_000)
         net.deliveries.clear()
 
-        n.getValue(a).messenger.sendText(c, "routed")
+        a.messenger.sendText(c.id, "routed")
         settle()
 
-        assertEquals("routed", n.getValue(c).received().single().text)
-        assertFalse(net.deliveries.contains(a to d)) // no flood towards the dead end
+        assertEquals("routed", c.received().single().text)
+        assertFalse(net.deliveries.contains(a.id to d.id)) // no flood towards the dead end
     }
-}
 
-@OptIn(ExperimentalCoroutinesApi::class)
-class HelloSchedulingTest {
-    private fun id(i: Int) = "%016x".format(i)
-    private val a = id(1); private val b = id(2)
+    // ------------------------------------------------------------ end-to-end encryption
 
-    private fun TestScope.pair(): Triple<FakeNetwork, MeshMessenger, MeshMessenger> {
+    @Test
+    fun theFirstMessageRunsAKeyExchangeAndLaterOnesReuseIt() = runTest {
         val net = FakeNetwork()
-        val ta = net.FakeTransport(a).also { net.transports[a] = it }
-        val tb = net.FakeTransport(b).also { net.transports[b] = it }
-        val ma = MeshMessenger(ta, a, backgroundScope as CoroutineScope)
-        val mb = MeshMessenger(tb, b, backgroundScope as CoroutineScope)
-        net.link(a, b)
-        return Triple(net, ma, mb)
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        assertTrue(a.messenger.keyedPeers.value.isEmpty())
+
+        a.messenger.sendText(b.id, "one")
+        settle()
+        val keyPackets = net.wireOfType(PacketType.KEY).size
+        assertEquals(2, keyPackets) // request + response
+        assertEquals(setOf(b.id), a.messenger.keyedPeers.value)
+        assertEquals(setOf(a.id), b.messenger.keyedPeers.value)
+
+        a.messenger.sendText(b.id, "two")
+        b.messenger.sendText(a.id, "three")
+        settle()
+        assertEquals(keyPackets, net.wireOfType(PacketType.KEY).size)
+        assertEquals(listOf("one", "two"), b.received().map { it.text })
+        assertEquals("three", a.received().single().text)
     }
 
     @Test
-    fun helloIsSentAtLowPriorityShortlyAfterDiscoveryThenOnlyAboutEveryMinute() = runTest {
-        val (net, _, _) = pair()
-        val ta = net.transports.getValue(a)
-        advanceTimeBy(8_000)
-        assertEquals(1, ta.lowPrioritySends) // within the 0-4 s change delay
-        advanceTimeBy(30_000)
-        assertEquals(1, ta.lowPrioritySends) // never before 45 s after the previous round
-        advanceTimeBy(57_000)
-        assertEquals(2, ta.lowPrioritySends) // always by 75 s, and not yet a third
-    }
-
-    @Test
-    fun differentSeedsDesynchroniseTheSchedule() = runTest {
-        // Same start, same neighbours: only the random draws differ. Over several rounds the
-        // two nodes must not send in lockstep (as they did before jitter existed).
+    fun nothingReadableIsEverOnTheAir() = runTest {
         val net = FakeNetwork()
-        val ta = net.FakeTransport(a).also { net.transports[a] = it }
-        val tb = net.FakeTransport(b).also { net.transports[b] = it }
-        MeshMessenger(ta, a, backgroundScope as CoroutineScope, kotlin.random.Random(1))
-        MeshMessenger(tb, b, backgroundScope as CoroutineScope, kotlin.random.Random(99))
-        net.link(a, b)
-        val atA = mutableListOf<Long>(); val atB = mutableListOf<Long>()
-        var lastA = 0; var lastB = 0
-        for (sec in 1..600) {
-            advanceTimeBy(1_000)
-            if (ta.lowPrioritySends != lastA) { lastA = ta.lowPrioritySends; atA += sec.toLong() }
-            if (tb.lowPrioritySends != lastB) { lastB = tb.lowPrioritySends; atB += sec.toLong() }
-        }
-        assert(atA.size >= 8 && atB.size >= 8)
-        assert(atA.zip(atB).any { (x, y) -> kotlin.math.abs(x - y) >= 6 }) // drifted apart
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id) // b is the relay and sees every packet
+
+        a.messenger.sendText(c.id, "top secret plan")
+        a.messenger.sendPing(c.id)
+        settle()
+
+        assertEquals(2, c.received().size)
+        val onTheAir = net.wire.joinToString("") { String(it, Charsets.ISO_8859_1) }
+        assertFalse(onTheAir.contains("top secret"))
+        assertFalse(onTheAir.contains(MeshMessenger.PING_TEXT))
     }
 
     @Test
-    fun helloSkippedBecauseRadioBusyIsRetriedOnTheNextTick() = runTest {
-        val (net, _, _) = pair()
-        val ta = net.transports.getValue(a)
-        ta.busy = true
-        advanceTimeBy(7_000) // several ticks, all refused
-        assertEquals(0, ta.lowPrioritySends)
-        ta.busy = false
-        advanceTimeBy(3_000)
-        assertEquals(1, ta.lowPrioritySends) // delivered as soon as the radio frees up, not after 60 s
+    fun aRelayThatAltersAMessageIsDetected() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        a.messenger.sendText(b.id, "genuine")
+        settle()
+        val original = net.wireOfType(PacketType.MESSAGE).single()
+
+        // same packet identity, one ciphertext bit flipped, as a malicious relay would send it
+        val altered = original.encode().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 1).toByte() }
+        net.inject(b.id, altered)
+        settle()
+
+        assertEquals(listOf("genuine"), b.received().map { it.text })
+    }
+
+    @Test
+    fun aTamperedPacketCannotSuppressTheRealOne() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        net.dropIf = { Packet.decode(it)?.type == PacketType.MESSAGE } // the real message is lost on the air
+        a.messenger.sendText(b.id, "arrives later")
+        settle()
+        val real = net.wireOfType(PacketType.MESSAGE).single()
+        assertTrue(b.received().isEmpty())
+
+        // forged copy (same sender and id, garbage payload) must not poison the seen-cache
+        net.inject(b.id, Packet(PacketType.MESSAGE, real.senderId, real.destId, real.messageId, ByteArray(40)).encode())
+        settle()
+        net.inject(b.id, real.encode()) // the genuine one finally gets through
+        settle()
+
+        assertEquals(listOf("arrives later"), b.received().map { it.text })
+    }
+
+    @Test
+    fun aMessageCannotBeReplayedUnderAnotherRecipientOrType() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(a.id, c.id); net.link(b.id, c.id)
+        a.messenger.sendText(b.id, "for b only")
+        a.messenger.sendText(c.id, "for c")
+        settle()
+        val forB = net.wireOfType(PacketType.MESSAGE).first { it.destId == b.id }
+
+        // redirect b's ciphertext to c, and re-label it as a PING: both break the AAD binding
+        net.inject(c.id, Packet(PacketType.MESSAGE, forB.senderId, c.id, 777, forB.payload).encode())
+        net.inject(b.id, Packet(PacketType.PING, forB.senderId, forB.destId, 778, forB.payload).encode())
+        settle()
+
+        assertEquals(listOf("for c"), c.received().map { it.text })
+        assertEquals(listOf("for b only"), b.received().map { it.text })
+    }
+
+    @Test
+    fun aForgedAckDoesNotMarkAMessageDelivered() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        net.dropIf = { Packet.decode(it)?.type == PacketType.ACK } // the genuine ACK never arrives
+        a.messenger.sendText(b.id, "did you get it?")
+        settle()
+        val sent = a.sent().single()
+        assertEquals(MessageStatus.SENT, sent.status)
+
+        val acked = ByteBuffer.allocate(4).putInt(sent.messageId).array()
+        // an unsealed ACK, and one sealed with a key the attacker invented
+        net.inject(a.id, Packet(PacketType.ACK, b.id, a.id, 1, acked).encode())
+        val wrongKey = ByteArray(32) { 7 }
+        net.inject(a.id, Packet(PacketType.ACK, b.id, a.id, 2, Crypto.seal(wrongKey, acked, Packet.aad(PacketType.ACK, b.id, a.id, 2))).encode())
+        settle()
+
+        assertEquals(MessageStatus.SENT, a.sent().single().status)
+    }
+
+    @Test
+    fun aKeyThatDoesNotMatchTheClaimedNodeIdIsRejected() = runTest {
+        val net = FakeNetwork()
+        val a = node(net)
+        val mallory = LocalIdentity.generate()
+        val victimId = LocalIdentity.generate().nodeId // an ID mallory does not own
+
+        settle() // let the node start listening: a payload injected earlier would be lost
+        net.inject(a.id, Packet(PacketType.KEY, victimId, a.id, 5, KeyPayload.encode(false, mallory.publicKey)).encode())
+        settle()
+
+        assertTrue(a.keys.keys.isEmpty())
+        assertTrue(a.messenger.keyedPeers.value.isEmpty())
+    }
+
+    @Test
+    fun aKeyForAnOffCurvePointIsRejectedEvenIfTheIdMatchesItsHash() = runTest {
+        val net = FakeNetwork()
+        val a = node(net)
+        val bad = LocalIdentity.generate().publicKey.copyOf().also { it[64] = (it[64] + 1).toByte() }
+
+        settle() // let the node start listening: a payload injected earlier would be lost
+        net.inject(a.id, Packet(PacketType.KEY, Crypto.nodeIdOf(bad), a.id, 5, KeyPayload.encode(false, bad)).encode())
+        settle()
+
+        assertTrue(a.keys.keys.isEmpty())
+    }
+
+    @Test
+    fun aValidKeyIsStoredAndAnswered() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+
+        settle() // let the node start listening: a payload injected earlier would be lost
+        net.inject(a.id, Packet(PacketType.KEY, b.id, a.id, 5, KeyPayload.encode(true, b.identity.publicKey)).encode())
+        settle()
+
+        assertEquals(setOf(b.id), a.keys.keys.keys)
+        assertEquals(1, net.wireOfType(PacketType.KEY).size) // a answered the request
+    }
+
+    @Test
+    fun keyExchangeWorksAcrossARelay() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id)
+
+        a.messenger.sendText(c.id, "end to end")
+        settle()
+
+        assertEquals(setOf(c.id), a.messenger.keyedPeers.value)
+        assertTrue(b.keys.keys.isEmpty()) // the relay never learns anybody's key
+        assertEquals(setOf(a.id), c.messenger.keyedPeers.value)
+    }
+
+    // ------------------------------------------------------------ persistence
+
+    @Test
+    fun historyAndKeysSurviveARestart() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        a.messenger.sendText(b.id, "before restart")
+        settle()
+        assertEquals(1, b.store.rows.size)
+
+        val b2 = node(net, b.identity, b.store, b.keys) // same identity and storage, fresh process
+        net.link(a.id, b2.id)
+        settle()
+
+        assertEquals(listOf("before restart"), b2.received().map { it.text })
+        assertEquals(setOf(a.id), b2.messenger.keyedPeers.value)
+        val keyPacketsBefore = net.wireOfType(PacketType.KEY).size
+        a.messenger.sendText(b2.id, "after restart")
+        settle()
+        assertEquals(listOf("before restart", "after restart"), b2.received().map { it.text })
+        assertEquals(keyPacketsBefore, net.wireOfType(PacketType.KEY).size) // no new handshake needed
+    }
+
+    @Test
+    fun aMessageStillSendingWhenTheAppDiedBecomesFailed() = runTest {
+        val net = FakeNetwork()
+        val store = InMemoryMessageStore()
+        val stale = ChatMessage(messageId = 1, peerId = "00000000000000aa", peerName = "X", outgoing = true,
+            text = "never finished", status = MessageStatus.SENDING)
+        store.upsert(stale)
+
+        val a = node(net, store = store)
+        settle()
+
+        assertEquals(MessageStatus.FAILED, a.sent().single().status)
+        assertEquals(MessageStatus.FAILED, store.rows.getValue(stale.key).status)
+    }
+
+    @Test
+    fun statusChangesArePersisted() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+
+        a.messenger.sendText(b.id, "persist me")
+        settle()
+
+        val row = a.store.rows.values.single()
+        assertEquals("persist me", row.text)
+        assertEquals(MessageStatus.DELIVERED, row.status)
+    }
+
+    @Test
+    fun aReplayedMessageAfterARestartIsNotShownTwice() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        a.messenger.sendText(b.id, "once only")
+        settle()
+        val captured = net.wireOfType(PacketType.MESSAGE).single().encode()
+
+        val b2 = node(net, b.identity, b.store, b.keys)
+        net.link(a.id, b2.id)
+        settle()
+        net.inject(b2.id, captured) // an eavesdropper replays the recorded packet
+        settle()
+
+        assertEquals(1, b2.received().size)
+    }
+
+    @Test
+    fun clearHistoryEmptiesMemoryAndStoreButKeepsKeys() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        a.messenger.sendText(b.id, "to be deleted")
+        settle()
+
+        a.messenger.clearHistory()
+        settle()
+
+        assertTrue(a.messenger.messages.value.isEmpty())
+        assertTrue(a.store.rows.isEmpty())
+        assertEquals(setOf(b.id), a.keys.keys.keys)
+    }
+
+    @Test
+    fun receivedMessagesKeepTheSendersNameOffline() = runTest {
+        val net = FakeNetwork()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        a.messenger.sendText(b.id, "hi")
+        settle()
+        val name = b.received().single().peerName
+        assertNull(name.takeIf { it.isBlank() })
+
+        val b2 = node(net, b.identity, b.store, b.keys) // restarted, nobody in range yet
+        settle()
+
+        assertEquals(name, b2.received().single().peerName)
     }
 }

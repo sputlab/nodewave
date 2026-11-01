@@ -17,3 +17,6 @@ Off-grid mesh walkie-talkie, 100% F-Droid ready, native hardware only.
 - **Layering:** `MeshTransport` moves opaque bytes between peers identified by stable node ID; the application protocol (packet framing, chat, ACKs) lives in `com.nodewave.mesh.protocol` and must stay free of radio/BLE APIs so it can be unit-tested on the JVM.
 - **License:** GPL-3.0. Do not add dependencies that are incompatible with it.
 - **Relay:** multi-hop logic (routing, seen-cache, TTL, HELLO) lives in `MeshMessenger`/`Router`/`RoutingTable` and is covered by the in-memory mesh simulation in `MeshNetworkTest`; extend that test whenever relay behaviour changes.
+- **Cryptography:** only the standard JCA/JCE (no custom primitives, no third-party crypto libraries); crypto code lives in `com.nodewave.mesh.crypto`, free of Android APIs so it runs in JVM tests. Every security property needs a test that fails when the check is removed. Keep `docs/SECURITY.md` truthful, limitations included.
+- **Process model:** the radio, identity, storage and messenger belong to `MeshEngine` (owned by `NodeWaveApp`) and run under `RadioService`; view models only observe. Never tie the radio to an activity or view-model lifecycle.
+- **Persistence:** framework SQLite behind the `MessageStore`/`PeerKeyStore` interfaces (JVM tests use in-memory fakes); message text is encrypted at rest with the Keystore.

@@ -74,11 +74,16 @@ class PacketTest {
     }
 
     @Test
-    fun v1PacketsAreRejected() {
-        val bytes = Packet(PacketType.MESSAGE, sender, dest, 1).encode()
-        bytes[0] = 1
-        assertNull(Packet.decode(bytes))
+    fun olderProtocolVersionsAreRejected() {
+        for (old in 1..2) {
+            val bytes = Packet(PacketType.MESSAGE, sender, dest, 1).encode()
+            bytes[0] = old.toByte()
+            assertNull(Packet.decode(bytes))
+        }
     }
+
+    @Test
+    fun protocolVersionIsThree() = assertEquals(3, Packet.VERSION)
 
     @Test
     fun unknownTypeIsRejected() {
@@ -93,16 +98,22 @@ class PacketTest {
     }
 
     @Test
-    fun ackCarriesAckedMessageId() {
-        val ack = Packet.decode(Packet.ack(sender, dest, 5, 0x7EADBEEF).encode())!!
-        assertEquals(PacketType.ACK, ack.type)
-        assertEquals(dest, ack.destId)
-        assertEquals(0x7EADBEEF, ack.ackedMessageId())
+    fun keyPacketTypeRoundTrips() {
+        val decoded = Packet.decode(Packet(PacketType.KEY, sender, dest, 3, ByteArray(66)).encode())!!
+        assertEquals(PacketType.KEY, decoded.type)
+        assertEquals(66, decoded.payload.size)
     }
 
     @Test
-    fun ackedMessageIdIsNullForNonAck() {
-        assertNull(Packet(PacketType.MESSAGE, sender, dest, 1, ByteArray(4)).ackedMessageId())
+    fun aadCoversTheImmutableHeaderFieldsOnly() {
+        val p = Packet(PacketType.MESSAGE, sender, dest, 9, "x".toByteArray(), ttl = 5, hops = 0)
+        // relays change ttl/hops: the AAD must not, or relayed packets would fail authentication
+        assertArrayEquals(p.aad(), p.forwarded().forwarded().aad())
+        // everything else is bound
+        assertEquals(false, p.aad().contentEquals(Packet(PacketType.PING, sender, dest, 9).aad()))
+        assertEquals(false, p.aad().contentEquals(Packet(PacketType.MESSAGE, dest, dest, 9).aad()))
+        assertEquals(false, p.aad().contentEquals(Packet(PacketType.MESSAGE, sender, sender, 9).aad()))
+        assertEquals(false, p.aad().contentEquals(Packet(PacketType.MESSAGE, sender, dest, 10).aad()))
     }
 
     @Test(expected = IllegalArgumentException::class)

@@ -2,12 +2,15 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.3.2** - phones discover each other by stable node ID, exchange chat messages with delivery confirmation over pure BLE, and relay messages across intermediate phones (multi-hop). See the [changelog](CHANGELOG.md).
+**Status: v0.4.0** - phones discover each other, exchange **end-to-end encrypted** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
 
-## Features (v0.3.2)
+## Features (v0.4.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
-- Stable per-install node ID, so peers are recognised even when BLE addresses rotate.
+- Identity key pair per install; the node ID is derived from the public key, so peers are recognised even when BLE addresses rotate and an ID cannot be claimed by someone without the key.
+- End-to-end encryption (ECDH P-256, HKDF-SHA256, AES-256-GCM): relays and eavesdroppers cannot read or alter messages, and delivery receipts cannot be forged. See [docs/SECURITY.md](docs/SECURITY.md).
+- Foreground service: the radio keeps working with the screen off or the app closed (notification with a *Stop radio* action).
+- Persistent chat history (message text encrypted at rest with the Android Keystore) with a CLEAR button.
 - Live list of nodes: direct ones with signal strength (RSSI, dBm), indirect ones as `via <neighbour>`.
 - Multi-hop relay with TTL and duplicate suppression; delivery ACKs travel back across the relays.
 - Free-text chat to a selected node or to all nodes, with delivery status (`sent` / `DELIVERED` / `FAILED`), plus the number of relays crossed.
@@ -50,12 +53,24 @@ adb -s <serial> logcat -s MESH_RADIO   # with several devices connected
 4. Send a message from the sender to the receiver. The receiver shows it with `1 relay` and the sender marks it `DELIVERED · 1 relay`.
 5. Alternatively, switch Bluetooth off on the relay phone and watch the indirect node disappear (it can take up to a minute for a stale route to expire if the neighbour announcement was missed).
 
+## Running with the screen off
+
+Tap **START RADIO** once; a notification appears and the radio keeps running when you lock the phone or leave the app. Use **STOP RADIO** (or the notification action) to stop it. While the radio runs the service holds a partial wake lock (the CPU stays awake, which costs battery) so other phones can still connect to you.
+
+**Some phone makers freeze background apps anyway**, and then nobody can reach you with the screen off (the sender sees `Timeout during write`). Check [dontkillmyapp.com](https://dontkillmyapp.com) for your model. Known cases:
+
+- **Honor / Huawei (EMUI)**: the app is frozen when the screen turns off, even with a foreground service. Open *Settings > Apps > NodeWave > Battery > App launch*, switch to *Manage manually* and enable *Auto-launch*, *Secondary launch* and *Run in background*.
+- **Xiaomi (MIUI)**: worked in testing on a Mi Note 10; if yours stops, set *Battery saver* to *No restrictions* for NodeWave and enable *Autostart*.
+
 ## Permissions
 
 | API level | Runtime permissions | Manifest notes |
 |---|---|---|
 | 31+ (Android 12+) | `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT` | `BLUETOOTH_SCAN` has `neverForLocation` |
 | 29-30 (Android 10-11) | `ACCESS_FINE_LOCATION` | `BLUETOOTH`, `BLUETOOTH_ADMIN`, location capped at `maxSdkVersion="30"` |
+| 33+ (Android 13+) | `POST_NOTIFICATIONS` (optional) | shows the foreground-service notification |
+
+The app also declares `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_CONNECTED_DEVICE` (granted at install).
 
 ## Architecture
 
@@ -64,15 +79,21 @@ Clean MVVM in Kotlin and Jetpack Compose (Material 3), with Coroutines and Flow 
 ```
 com.nodewave.mesh
 ├── MainActivity.kt        Compose UI, permission requests
-├── MainViewModel.kt       StateFlow state for the UI
+├── MainViewModel.kt       thin StateFlow adapter for the UI
+├── NodeWaveApp.kt         application: holds the process-wide MeshEngine
+├── MeshEngine.kt          identity, storage, transport and messenger
+├── RadioService.kt        foreground service that keeps the radio alive
+├── crypto/                Crypto (ECDH, HKDF, AES-GCM), LocalIdentity, Hkdf - pure JVM
+├── data/                  stores (SQLite), Keystore cipher, interfaces
 ├── protocol/
-│   ├── Packet.kt              24-byte header wire format (MESSAGE / PING / ACK / HELLO)
+│   ├── Packet.kt              24-byte header wire format (MESSAGE / PING / ACK / HELLO / KEY)
+│   ├── KeyPayload.kt          public-key exchange payload
 │   ├── Router.kt              next-hop selection (direct, route, flood)
 │   ├── RoutingTable.kt        routes learned from neighbours' HELLOs
 │   ├── HelloPayload.kt        neighbour list carried by HELLO
 │   ├── NodeAdvertisement.kt   node ID + name in the BLE scan response
 │   ├── NodeIdentity.kt        persisted stable node ID
-│   └── MeshMessenger.kt       chat history, relay, seen-cache, delivery ACKs, HELLOs
+│   └── MeshMessenger.kt       key exchange, sealing, relay, seen-cache, ACKs, HELLOs, history
 └── transport/
     ├── MeshTransport.kt   hardware-agnostic radio contract
     ├── BleTransport.kt    pure-BLE implementation
@@ -83,12 +104,12 @@ The UI never touches radio APIs; everything goes through `MeshTransport`, and `M
 
 ## Roadmap
 
-- **v0.4.0** - to be planned (ideas: foreground service for background operation, message persistence, encryption).
+- **v0.5.0** - to be planned (ideas: forward secrecy and key rotation, authenticated HELLOs, signed release builds for F-Droid).
 
 ## Tests
 
 ```sh
-./gradlew testDebugUnitTest   # codec, routing and an in-memory multi-node mesh simulation
+./gradlew testDebugUnitTest   # crypto, codec, routing and an in-memory encrypted multi-node mesh simulation
 ```
 
 ## License

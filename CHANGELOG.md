@@ -9,6 +9,48 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 - All user-facing text is now English (the UI was Italian up to v0.3.2): `NODES`, `STATE`, `SEND` / `ALL`, `sending…` / `sent` / `DELIVERED` / `FAILED`, `DEBUG: skip direct link (force relay)`. Changelog entries for earlier versions use the English labels.
 - The development language of the project is English (code, comments, commit messages, docs, UI). The ping payload remains the ham-radio greeting `CIAO - 73`.
 
+## [0.4.0] - 2026-11-01
+
+Background operation, persistent history and end-to-end encryption.
+
+### Added
+- **Foreground service** (`RadioService`, type `connectedDevice`): the radio keeps running with the screen off or the app closed. A low-importance notification shows the state and the number of nearby nodes, with a *Stop radio* action. START/STOP RADIO now start and stop the service. Android 13+ asks for the notification permission (the radio works without it).
+- **Persistent chat history** (framework SQLite, no new dependency): messages and their delivery status survive restarts; a message that was still `sending…` when the app died is shown as `FAILED`. A *CLEAR* button deletes the history. Message text is encrypted at rest with an Android Keystore AES-256-GCM key.
+- **End-to-end encryption** (standard JCA only, see [docs/SECURITY.md](docs/SECURITY.md)):
+  - every device has a P-256 identity key pair, stored encrypted by the Keystore; its **node ID is now derived from the public key** (first 8 bytes of SHA-256), so IDs are self-certifying;
+  - a `KEY` packet exchange, routed and relayed like a message, runs automatically before the first message to a node; keys are checked (point on curve, hash equals the claimed ID) and remembered;
+  - pair key = ECDH + HKDF-SHA256 bound to both node IDs; messages are AES-256-GCM sealed with the header fields as AAD, so relays cannot read, alter, redirect or re-label them;
+  - **delivery ACKs are sealed too**, so a forged ACK cannot mark a message delivered;
+  - only authenticated packets enter the replay (seen) cache, and it is rebuilt from the stored history at start-up.
+- The service holds a **partial wake lock** while the radio runs (new `WAKE_LOCK` permission, install-time) so the GATT server stays reachable with the screen off.
+- UI: full node ID (grouped by four digits) for this device and every node, and an `E2E key` indicator on nodes whose key we hold.
+- `docs/SECURITY.md`: design, what is protected and the known limitations.
+- 101 unit tests (new: HKDF against the RFC 5869 vector, key validation, sealing and tamper detection, a full encrypted mesh simulation with eavesdropping, tampering, forged ACKs/keys, replays, restarts and history persistence). Security-critical checks were verified by breaking each one on purpose and confirming a test fails.
+
+### Changed
+- The radio, identity, storage and messenger now live in a process-wide `MeshEngine` owned by the application, not in the view model; the UI only observes it.
+- Maximum message size 200 -> 180 bytes of text, to leave room for the 28-byte encryption overhead within one BLE write.
+- Packet format version 3: new `KEY` type; MESSAGE/PING payloads are sealed text and ACK payloads are a sealed message ID.
+
+### Fixed
+- Restoring the history could duplicate a message created while it was loading.
+- Node list: the first row was cut off under the header when a node was inserted above the first visible one; the debug switch moved to the console header to give the list room.
+
+### Breaking
+- v0.4.0 is **not wire-compatible** with earlier versions (protocol version 3, encrypted payloads). Update every device.
+- **Node IDs change** on first launch (they are now derived from a freshly generated key). Nothing was persisted before, so there is no history to migrate.
+
+### Verified on devices
+- Foreground service: radio active, notification with *Stop radio* action, keys and history surviving an app reinstall, encrypted ping with authenticated ACK between Mi Note 10 and Honor View 10.
+- Screen off: the **Mi Note 10** (MIUI) received a ping, sent its ACK and the sender marked it `DELIVERED`.
+- Screen off on the **Honor View 10 (EMUI 10)**: **not working** with default settings. EMUI moves the process into a freezer cgroup when the screen turns off (no log output at all, peers get `Timeout during write`), neither the foreground service, the wake lock nor the Doze whitelist prevent it. The user must set *App launch > Manage manually* for NodeWave (see README); this has not been re-tested yet.
+- Not tested: real Doze (phones were charging on USB), the Sony XQ-AS52 (not connected during these tests), three-node relay with encryption on hardware.
+
+### Known limitations
+- Phone makers' battery managers can freeze the app despite the foreground service (see README).
+- Metadata (node IDs, names, packet types, sizes, timing) is visible to anyone in Bluetooth range; there is no forward secrecy or key rotation; HELLO packets are not authenticated. See [docs/SECURITY.md](docs/SECURITY.md). The code has not been independently audited.
+- The Keystore cipher, SQLite store and foreground service are Android components that the JVM tests cannot exercise; they are verified on devices only.
+
 ## [0.3.2] - 2026-11-01
 
 Fewer failed links, from the logs of a three-phone run: 15 of 77 connection attempts failed (19%), 14 of them involving the Honor View 10, clustered on the once-a-minute HELLO bursts of phones that had been started together.
