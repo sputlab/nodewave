@@ -53,6 +53,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
+import kotlin.random.Random
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -78,8 +79,13 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         private const val OP_TIMEOUT_MS = 5000L
         /** Background (low-priority) sends give up on a stuck step sooner, to free the radio. */
         private const val LOW_PRIORITY_STEP_TIMEOUT_MS = 2000L
-        private const val SEND_ATTEMPTS = 2
-        private const val SEND_RETRY_DELAY_MS = 400L
+        /**
+         * Attempts per user send. A failed link usually means the peer is mid-session with us (about 2 s),
+         * so waits grow (0.8 s, 1.6 s, plus up to 0.4 s of random jitter to break symmetry with the peer).
+         */
+        private const val SEND_ATTEMPTS = 3
+        private const val SEND_RETRY_BASE_MS = 800L
+        private const val SEND_RETRY_JITTER_MS = 400L
         private const val MTU_TIMEOUT_MS = 2000L
         private const val DISCONNECT_TIMEOUT_MS = 1000L
         private const val PEER_TTL_MS = 15_000L
@@ -319,7 +325,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         val scanner = adapter.bluetoothLeScanner
             ?: throw IllegalStateException("BLE scanner unavailable")
         val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build())
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build()
 
         scanJob = scope.launch {
             scanFlow(scanner, filters, settings)
@@ -429,8 +435,9 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             result = writeToPeer(address, label, payload, stepTimeoutMs)
             if (result.isSuccess || result.exceptionOrNull() !is TransientLinkException) return result
             if (attempt < attempts) {
-                MeshLog.d("Link to $label failed (${result.exceptionOrNull()?.message}), retrying")
-                delay(SEND_RETRY_DELAY_MS)
+                val wait = SEND_RETRY_BASE_MS * attempt + Random.nextLong(SEND_RETRY_JITTER_MS + 1)
+                MeshLog.d("Link to $label failed (${result.exceptionOrNull()?.message}), retry ${attempt + 1}/$attempts in ${wait}ms")
+                delay(wait)
             }
         }
         return result

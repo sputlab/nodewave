@@ -2,9 +2,9 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.3.1** - phones discover each other by stable node ID, exchange chat messages with delivery confirmation over pure BLE, and relay messages across intermediate phones (multi-hop). See the [changelog](CHANGELOG.md).
+**Status: v0.3.2** - phones discover each other by stable node ID, exchange chat messages with delivery confirmation over pure BLE, and relay messages across intermediate phones (multi-hop). See the [changelog](CHANGELOG.md).
 
-## Features (v0.3.1)
+## Features (v0.3.2)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Stable per-install node ID, so peers are recognised even when BLE addresses rotate.

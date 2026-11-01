@@ -37,7 +37,8 @@ data class NodeEntry(
 class MeshMessenger(
     private val transport: MeshTransport,
     private val localNodeId: String,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val random: Random = Random.Default
 ) {
     companion object {
         const val PING_TEXT = "CIAO - 73"
@@ -48,6 +49,10 @@ class MeshMessenger(
         private const val ACK_RETRY_DELAY_MS = 700L
         private const val TICK_MS = 2_000L
         private const val HELLO_INTERVAL_MS = 60_000L
+        /** Each periodic HELLO round is drawn from 60 s +/- 15 s so phones never stay in lockstep. */
+        private const val HELLO_JITTER_MS = 15_000L
+        /** A neighbour-set change is announced after a random 0-4 s, so phones started together do not all connect at once. */
+        private const val HELLO_CHANGE_DELAY_MS = 4_000L
         private const val ROUTE_TTL_MS = 150_000L
     }
 
@@ -236,13 +241,15 @@ class MeshMessenger(
     }
 
     /**
-     * Announces our neighbours to each neighbour when the set changes and every [HELLO_INTERVAL_MS].
-     * HELLOs are background traffic: they are sent at low priority (never delaying chat or ACKs) and a
-     * target skipped because the radio was busy is retried on the next tick.
+     * Announces our neighbours to each neighbour: shortly after the set changes, then roughly every
+     * minute. Both delays are randomised, otherwise phones started together keep sending in lockstep and
+     * their connections collide. HELLOs are background traffic: low priority (never delaying chat or
+     * ACKs); a target skipped because the radio was busy is retried on the next tick.
      */
     private suspend fun helloLoop() {
         var lastIds = emptySet<String>()
-        var lastHelloAt = -HELLO_INTERVAL_MS
+        var nextPeriodicAt = Long.MAX_VALUE
+        var changeAt: Long? = null
         var elapsed = 0L
         val skipped = mutableSetOf<String>()
         while (scope.isActive) {
@@ -252,26 +259,30 @@ class MeshMessenger(
             val peers = transport.discoveredPeers.value
             if (transport.state.value != TransportState.ACTIVE || peers.isEmpty()) {
                 lastIds = emptySet()
+                changeAt = null
                 skipped.clear()
                 continue
             }
             val ids = peers.map { it.id }.toSet()
-            val due = ids != lastIds || elapsed - lastHelloAt >= HELLO_INTERVAL_MS
-            if (due) {
+            if (ids != lastIds) {
                 lastIds = ids
-                lastHelloAt = elapsed
+                if (changeAt == null) changeAt = elapsed + random.nextLong(0, HELLO_CHANGE_DELAY_MS + 1)
+            }
+            if ((changeAt != null && elapsed >= changeAt) || elapsed >= nextPeriodicAt) {
+                changeAt = null
+                nextPeriodicAt = elapsed + HELLO_INTERVAL_MS + random.nextLong(-HELLO_JITTER_MS, HELLO_JITTER_MS + 1)
                 skipped.addAll(ids)
             }
             for (target in peers.filter { it.id in skipped }) {
                 val others = peers.filter { it.id != target.id }
                     .map { NodeAdvertisement.Info(it.id, it.displayName) }
                 val hello = Packet(
-                    PacketType.HELLO, localNodeId, target.id, Random.nextInt(),
+                    PacketType.HELLO, localNodeId, target.id, random.nextInt(),
                     HelloPayload.encode(others), ttl = 1
                 )
                 MeshLog.d("HELLO -> ${target.displayName} [${target.id.take(6)}] (${others.size} neighbour(s))")
                 val result = transport.send(target.id, hello.encode(), lowPriority = true)
-                // Busy: keep it queued for the next tick. Any other outcome: wait for the next interval.
+                // Busy: keep it queued for the next tick. Any other outcome: wait for the next round.
                 if (result.exceptionOrNull() !is TransportBusyException) skipped.remove(target.id)
             }
             skipped.retainAll(ids)

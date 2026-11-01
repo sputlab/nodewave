@@ -7,6 +7,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 Nothing yet.
 
+## [0.3.2] - 2026-11-01
+
+Fewer failed links, from the logs of a three-phone run: 15 of 77 connection attempts failed (19%), 14 of them involving the Honor View 10, clustered on the once-a-minute HELLO bursts of phones that had been started together.
+
+### Fixed
+- **HELLO bursts no longer line up.** Each periodic round is drawn at random from 60 s +/- 15 s, and a neighbour-set change is announced after a random 0-4 s, so phones started together drift apart instead of connecting to each other at the same moment every minute.
+- **Retries wait long enough.** User sends now make 3 attempts with growing, jittered waits (about 0.8 s then 1.6 s, plus up to 0.4 s random) instead of 2 attempts 0.4 s apart: a failed link usually means the peer is mid-session with us for about 2 s, which swallowed both old attempts.
+
+### Changed
+- BLE scan mode `LOW_LATENCY` -> `BALANCED`, to leave radio time for connections. This is a hypothesis (continuous scanning is known to starve connections on some Huawei chipsets), not something the logs proved: compare the failure rate against 0.3.1.
+
+### Tests
+- 54 unit tests (new: HELLO jitter bounds and desynchronisation across different seeds). Retry timing and scan mode need real hardware and are not covered by the JVM suite.
+
 ## [0.3.1] - 2026-11-01
 
 Radio reliability and log readability, from analysing logs of a three-phone run (Honor, Sony, Mi Note 10).
