@@ -3,80 +3,115 @@ package com.nodewave.mesh.protocol
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PacketTest {
-    private val nodeId = "0123456789abcdef"
+    private val sender = "0123456789abcdef"
+    private val dest = "fedcba9876543210"
 
     @Test
     fun roundTripPreservesAllFields() {
-        val original = Packet(PacketType.MESSAGE, nodeId, -123456, "CIAO - 73".toByteArray())
+        val original = Packet(PacketType.MESSAGE, sender, dest, -123456, "CIAO - 73".toByteArray(), ttl = 4, hops = 1)
         val decoded = Packet.decode(original.encode())!!
         assertEquals(PacketType.MESSAGE, decoded.type)
-        assertEquals(nodeId, decoded.senderId)
+        assertEquals(sender, decoded.senderId)
+        assertEquals(dest, decoded.destId)
         assertEquals(-123456, decoded.messageId)
+        assertEquals(4, decoded.ttl)
+        assertEquals(1, decoded.hops)
         assertArrayEquals("CIAO - 73".toByteArray(), decoded.payload)
     }
 
     @Test
-    fun headerIsFourteenBytes() {
-        assertEquals(14, Packet.HEADER_SIZE)
-        assertEquals(14, Packet(PacketType.PING, nodeId, 1).encode().size)
+    fun headerIsTwentyFourBytes() {
+        assertEquals(24, Packet.HEADER_SIZE)
+        assertEquals(24, Packet(PacketType.PING, sender, dest, 1).encode().size)
+    }
+
+    @Test
+    fun newPacketsStartWithDefaultTtlAndZeroHops() {
+        val p = Packet(PacketType.MESSAGE, sender, dest, 1)
+        assertEquals(Packet.DEFAULT_TTL, p.ttl)
+        assertEquals(0, p.hops)
+    }
+
+    @Test
+    fun forwardedDecrementsTtlIncrementsHopsAndKeepsIdentity() {
+        val original = Packet(PacketType.MESSAGE, sender, dest, 77, "x".toByteArray(), ttl = 5, hops = 0)
+        val fwd = original.forwarded()
+        assertEquals(4, fwd.ttl)
+        assertEquals(1, fwd.hops)
+        assertEquals(original.uid, fwd.uid)
+        assertEquals(sender, fwd.senderId)
+        assertEquals(dest, fwd.destId)
+        assertArrayEquals(original.payload, fwd.payload)
     }
 
     @Test
     fun emptyPayloadIsAllowed() {
-        assertEquals(0, Packet.decode(Packet(PacketType.PING, nodeId, 7).encode())!!.payload.size)
+        assertEquals(0, Packet.decode(Packet(PacketType.PING, sender, dest, 7).encode())!!.payload.size)
     }
 
     @Test
     fun utf8PayloadSurvives() {
         val text = "Ciao è già così ✓"
-        val decoded = Packet.decode(Packet(PacketType.MESSAGE, nodeId, 1, text.toByteArray()).encode())!!
+        val decoded = Packet.decode(Packet(PacketType.MESSAGE, sender, dest, 1, text.toByteArray()).encode())!!
         assertEquals(text, decoded.payload.toString(Charsets.UTF_8))
     }
 
     @Test
     fun truncatedPacketIsRejected() {
-        val bytes = Packet(PacketType.MESSAGE, nodeId, 1, "x".toByteArray()).encode()
+        val bytes = Packet(PacketType.MESSAGE, sender, dest, 1, "x".toByteArray()).encode()
         assertNull(Packet.decode(bytes.copyOf(Packet.HEADER_SIZE - 1)))
         assertNull(Packet.decode(ByteArray(0)))
     }
 
     @Test
     fun unknownVersionIsRejected() {
-        val bytes = Packet(PacketType.MESSAGE, nodeId, 1).encode()
+        val bytes = Packet(PacketType.MESSAGE, sender, dest, 1).encode()
         bytes[0] = 99
         assertNull(Packet.decode(bytes))
     }
 
     @Test
+    fun v1PacketsAreRejected() {
+        val bytes = Packet(PacketType.MESSAGE, sender, dest, 1).encode()
+        bytes[0] = 1
+        assertNull(Packet.decode(bytes))
+    }
+
+    @Test
     fun unknownTypeIsRejected() {
-        val bytes = Packet(PacketType.MESSAGE, nodeId, 1).encode()
+        val bytes = Packet(PacketType.MESSAGE, sender, dest, 1).encode()
         bytes[1] = 42
         assertNull(Packet.decode(bytes))
     }
 
     @Test
     fun legacyV010PlainTextIsRejected() {
-        assertNull(Packet.decode("CIAO - 73".toByteArray()))
+        assertNull(Packet.decode("CIAO - 73 CIAO - 73 CIAO - 73".toByteArray()))
     }
 
     @Test
     fun ackCarriesAckedMessageId() {
-        val ack = Packet.decode(Packet.ack(nodeId, 5, 0x7EADBEEF).encode())!!
+        val ack = Packet.decode(Packet.ack(sender, dest, 5, 0x7EADBEEF).encode())!!
         assertEquals(PacketType.ACK, ack.type)
+        assertEquals(dest, ack.destId)
         assertEquals(0x7EADBEEF, ack.ackedMessageId())
     }
 
     @Test
     fun ackedMessageIdIsNullForNonAck() {
-        assertNull(Packet(PacketType.MESSAGE, nodeId, 1, ByteArray(4)).ackedMessageId())
+        assertNull(Packet(PacketType.MESSAGE, sender, dest, 1, ByteArray(4)).ackedMessageId())
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun invalidSenderIdIsRefused() {
-        Packet(PacketType.MESSAGE, "short", 1)
+        Packet(PacketType.MESSAGE, "short", dest, 1)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun invalidDestIdIsRefused() {
+        Packet(PacketType.MESSAGE, sender, "short", 1)
     }
 }

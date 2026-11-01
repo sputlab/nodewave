@@ -5,7 +5,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
-Planned for v0.3.0: multi-hop relay.
+Nothing yet.
+
+## [0.3.0] - 2026-11-01
+
+Multi-hop relay: messages now cross intermediate nodes to reach phones that are out of direct range.
+
+### Added
+- **Relay**: a node that receives a packet addressed to someone else forwards it. Next hop is chosen by `Router`: the destination itself if directly visible, else the neighbour a route points to, else a flood to all neighbours (never back to the packet's author).
+- **Loop and storm protection**: a seen-cache keyed by `(senderId, messageId)` drops duplicate copies, and a TTL (default 5) bounds how far a packet travels. Messages reach nodes up to 5 links away.
+- **Reachability**: nodes exchange `HELLO` packets (every 20 s and whenever the neighbour set changes) listing their direct neighbours. The node list now shows indirect nodes as `via <neighbour>`; routes expire after 60 s or as soon as the relay is no longer visible.
+- **Multi-hop ACKs**: acknowledgements are routed back the same way; the chat shows the number of relays crossed (`CONSEGNATO · 1 relay`).
+- **Debug switch** "ignora link diretto (forza relay)": the node never hands its own packets straight to their destination, so relaying can be tested with all phones in range. Enable it on both the sender and the receiver to force the ACK through the relay as well.
+- Router, routing table, HELLO codec and a JVM mesh simulation (in-memory radio, up to 7 nodes) covering relay, forced relay, exactly-once delivery in a full mesh, TTL limits, route learning and expiry. 51 unit tests in total.
+
+### Changed
+- Packet header v2 is 24 bytes: `[version][type][ttl][hops][senderId][destId][messageId]`. `destId` and `ttl`/`hops` are new; new packet type `HELLO`.
+- `MeshMessenger` now owns routing and exposes `nodes` (direct and indirect) instead of the UI reading peers from the transport.
+- "TUTTI" and broadcast ping now address every known node, direct or indirect.
+
+### Breaking
+- v0.3.0 is **not wire-compatible** with v0.2.0 (protocol version 1 packets are dropped). Update every device.
+
+### Known limitations
+- Flooding is used whenever no route is known yet, which is wasteful on large meshes; routes are learned from HELLOs only up to two hops.
+- HELLOs and relayed packets share the single GATT send queue, so a busy node adds latency to chat messages.
 
 ## [0.2.0] - 2026-11-01
 

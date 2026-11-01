@@ -25,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,11 +56,11 @@ import androidx.compose.ui.text.input.ImeAction
 import com.nodewave.mesh.protocol.ChatMessage
 import com.nodewave.mesh.protocol.MeshMessenger
 import com.nodewave.mesh.protocol.MessageStatus
+import com.nodewave.mesh.protocol.NodeEntry
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.nodewave.mesh.transport.BleTransport
-import com.nodewave.mesh.transport.PeerNode
 import com.nodewave.mesh.transport.TransportState
 import com.nodewave.mesh.ui.theme.NodeWaveTheme
 import com.nodewave.mesh.ui.theme.TacticalAmber
@@ -88,7 +89,8 @@ private val Mono = FontFamily.Monospace
 private fun MainScreen(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
     val state by vm.transportState.collectAsStateWithLifecycle()
-    val peers by vm.peers.collectAsStateWithLifecycle()
+    val nodes by vm.nodes.collectAsStateWithLifecycle()
+    val ignoreDirect by vm.ignoreDirect.collectAsStateWithLifecycle()
     val messages by vm.messages.collectAsStateWithLifecycle()
     val selectedPeerId by vm.selectedPeerId.collectAsStateWithLifecycle()
     val logLines by vm.logLines.collectAsStateWithLifecycle()
@@ -130,24 +132,31 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
             }
         )
 
-        Panel(title = "NODI VICINI (${peers.size})", modifier = Modifier.weight(1f)) {
+        Panel(title = "NODI (${nodes.size})", modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = ignoreDirect, onCheckedChange = vm::setIgnoreDirect)
+                Text(
+                    "  DEBUG: ignora link diretto (forza relay)",
+                    color = if (ignoreDirect) TacticalAmber else TacticalDim, fontFamily = Mono, fontSize = 11.sp
+                )
+            }
             Button(
                 onClick = vm::broadcastPing,
-                enabled = peers.isNotEmpty() && state == TransportState.ACTIVE,
+                enabled = nodes.isNotEmpty() && state == TransportState.ACTIVE,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = TacticalAmber)
             ) { Text("BROADCAST A TUTTI (CIAO - 73)", fontFamily = Mono, fontWeight = FontWeight.Bold) }
-            if (peers.isEmpty()) {
+            if (nodes.isEmpty()) {
                 Text("Nessun nodo in ascolto…", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(peers, key = { it.id }) { peer ->
+                items(nodes, key = { it.id }) { node ->
                     PeerRow(
-                        peer = peer,
-                        selected = peer.id == selectedPeerId,
+                        node = node,
+                        selected = node.id == selectedPeerId,
                         enabled = state == TransportState.ACTIVE,
-                        onSelect = { vm.selectPeer(peer.id) },
-                        onPing = { vm.ping(peer.id) }
+                        onSelect = { vm.selectPeer(node.id) },
+                        onPing = { vm.ping(node.id) }
                     )
                 }
             }
@@ -162,7 +171,7 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
                 items(messages, key = { it.key }) { m -> MessageLine(m) }
             }
             ChatInput(
-                targetName = peers.firstOrNull { it.id == selectedPeerId }?.displayName,
+                targetName = nodes.firstOrNull { it.id == selectedPeerId }?.name,
                 enabled = state == TransportState.ACTIVE,
                 onSend = vm::sendText,
                 onBroadcast = vm::broadcastText
@@ -215,7 +224,7 @@ private fun Header(nodeName: String, nodeId: String, state: TransportState, acti
 }
 
 @Composable
-private fun PeerRow(peer: PeerNode, selected: Boolean, enabled: Boolean, onSelect: () -> Unit, onPing: () -> Unit) {
+private fun PeerRow(node: NodeEntry, selected: Boolean, enabled: Boolean, onSelect: () -> Unit, onPing: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -226,9 +235,13 @@ private fun PeerRow(peer: PeerNode, selected: Boolean, enabled: Boolean, onSelec
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(peer.displayName, color = Color.White, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Text("ID ${peer.id.take(6)}", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
-            Text(peer.rssi?.let { "$it dBm" } ?: "-- dBm", color = TacticalAmber, fontFamily = Mono, fontSize = 12.sp)
+            Text(node.name, color = Color.White, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text("ID ${node.id.take(6)}", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
+            if (node.isDirect) {
+                Text(node.rssi?.let { "$it dBm" } ?: "-- dBm", color = TacticalAmber, fontFamily = Mono, fontSize = 12.sp)
+            } else {
+                Text("via ${node.viaName ?: node.viaId?.take(6)}", color = TacticalGreen, fontFamily = Mono, fontSize = 12.sp)
+            }
         }
         OutlinedButton(onClick = onPing, enabled = enabled, border = BorderStroke(1.dp, TacticalGreen)) {
             Text("PING (CIAO - 73)", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
@@ -255,7 +268,10 @@ private fun MessageLine(m: ChatMessage) {
             Text("» ${m.text}", color = if (m.outgoing) Color.White else TacticalGreen,
                 fontFamily = Mono, fontSize = 12.sp, modifier = Modifier.weight(1f, fill = false))
             if (statusLabel.isNotEmpty()) {
-                Text("  $statusLabel", color = statusColor, fontFamily = Mono, fontSize = 10.sp)
+                val relays = if (m.hops > 0) " · ${m.hops} relay" else ""
+                Text("  $statusLabel$relays", color = statusColor, fontFamily = Mono, fontSize = 10.sp)
+            } else if (m.hops > 0) {
+                Text("  ${m.hops} relay", color = TacticalGreen, fontFamily = Mono, fontSize = 10.sp)
             }
         }
     }

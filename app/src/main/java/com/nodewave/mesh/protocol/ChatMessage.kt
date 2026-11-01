@@ -12,6 +12,8 @@ data class ChatMessage(
     val outgoing: Boolean,
     val text: String,
     val isPing: Boolean = false,
+    /** Relays crossed: on received messages, by the message; on delivered ones, by the ACK. */
+    val hops: Int = 0,
     val time: Long = System.currentTimeMillis(),
     val status: MessageStatus
 )

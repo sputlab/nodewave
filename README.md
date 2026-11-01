@@ -2,14 +2,15 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.2.0** - phones discover each other by stable node ID and exchange chat messages with delivery confirmation over pure BLE. See the [changelog](CHANGELOG.md).
+**Status: v0.3.0** - phones discover each other by stable node ID, exchange chat messages with delivery confirmation over pure BLE, and relay messages across intermediate phones (multi-hop). See the [changelog](CHANGELOG.md).
 
-## Features (v0.2.0)
+## Features (v0.3.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Stable per-install node ID, so peers are recognised even when BLE addresses rotate.
-- Live list of nearby nodes with signal strength (RSSI, dBm).
-- Free-text chat to a selected node or to all nodes, with delivery status (`inviato` / `CONSEGNATO` / `FALLITO`).
+- Live list of nodes: direct ones with signal strength (RSSI, dBm), indirect ones as `via <neighbour>`.
+- Multi-hop relay with TTL and duplicate suppression; delivery ACKs travel back across the relays.
+- Free-text chat to a selected node or to all nodes, with delivery status (`inviato` / `CONSEGNATO` / `FALLITO`), plus the number of relays crossed.
 - Per-node ping and broadcast of "CIAO - 73".
 - On-screen `MESH_RADIO` log console.
 
@@ -41,6 +42,14 @@ adb logcat -s MESH_RADIO
 adb -s <serial> logcat -s MESH_RADIO   # with several devices connected
 ```
 
+## Testing the relay (three phones)
+
+1. Install the same version on all three phones and start the radio on each.
+2. Wait about 20 s: the node list of every phone should show the other two.
+3. Phones in the same room all see each other, so force the relay: on the **sender and the receiver** switch on *DEBUG: ignora link diretto*, leaving the third phone as it is.
+4. Send a message from the sender to the receiver. The receiver shows it with `1 relay` and the sender marks it `CONSEGNATO · 1 relay`.
+5. Alternatively, switch Bluetooth off on the relay phone and watch the indirect node disappear.
+
 ## Permissions
 
 | API level | Runtime permissions | Manifest notes |
@@ -57,10 +66,13 @@ com.nodewave.mesh
 ├── MainActivity.kt        Compose UI, permission requests
 ├── MainViewModel.kt       StateFlow state for the UI
 ├── protocol/
-│   ├── Packet.kt              14-byte header wire format (MESSAGE / PING / ACK)
+│   ├── Packet.kt              24-byte header wire format (MESSAGE / PING / ACK / HELLO)
+│   ├── Router.kt              next-hop selection (direct, route, flood)
+│   ├── RoutingTable.kt        routes learned from neighbours' HELLOs
+│   ├── HelloPayload.kt        neighbour list carried by HELLO
 │   ├── NodeAdvertisement.kt   node ID + name in the BLE scan response
 │   ├── NodeIdentity.kt        persisted stable node ID
-│   └── MeshMessenger.kt       chat history, framing, delivery ACKs
+│   └── MeshMessenger.kt       chat history, relay, seen-cache, delivery ACKs, HELLOs
 └── transport/
     ├── MeshTransport.kt   hardware-agnostic radio contract
     ├── BleTransport.kt    pure-BLE implementation
@@ -71,12 +83,12 @@ The UI never touches radio APIs; everything goes through `MeshTransport`, and `M
 
 ## Roadmap
 
-- **v0.3.0** - multi-hop relay.
+- **v0.4.0** - to be planned (ideas: foreground service for background operation, message persistence, encryption).
 
 ## Tests
 
 ```sh
-./gradlew testDebugUnitTest   # packet codec and advertisement format
+./gradlew testDebugUnitTest   # codec, routing and an in-memory multi-node mesh simulation
 ```
 
 ## License

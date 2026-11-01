@@ -6,11 +6,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.nodewave.mesh.protocol.ChatMessage
 import com.nodewave.mesh.protocol.MeshMessenger
+import com.nodewave.mesh.protocol.NodeEntry
 import com.nodewave.mesh.protocol.NodeIdentity
 import com.nodewave.mesh.transport.BleTransport
 import com.nodewave.mesh.transport.MeshLog
 import com.nodewave.mesh.transport.MeshTransport
-import com.nodewave.mesh.transport.PeerNode
 import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +27,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val messenger = MeshMessenger(transport, localNodeId, viewModelScope)
 
     val transportState: StateFlow<TransportState> = transport.state
-    val peers: StateFlow<List<PeerNode>> = transport.discoveredPeers
+    val nodes: StateFlow<List<NodeEntry>> = messenger.nodes
+    val ignoreDirect: StateFlow<Boolean> = messenger.ignoreDirect
     val messages: StateFlow<List<ChatMessage>> = messenger.messages
     val logLines: StateFlow<List<String>> = MeshLog.lines
 
@@ -45,6 +46,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopRadio() {
         viewModelScope.launch { transport.stop() }
     }
+
+    fun setIgnoreDirect(enabled: Boolean) = messenger.setIgnoreDirect(enabled)
 
     fun selectPeer(peerId: String) {
         _selectedPeerId.value = if (_selectedPeerId.value == peerId) null else peerId

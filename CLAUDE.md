@@ -16,3 +16,4 @@ Off-grid mesh walkie-talkie, 100% F-Droid ready, native hardware only.
   - Log every radio state transition, error and permission check with the unified tag `MESH_RADIO` (debug via `adb logcat -s MESH_RADIO`).
 - **Layering:** `MeshTransport` moves opaque bytes between peers identified by stable node ID; the application protocol (packet framing, chat, ACKs) lives in `com.nodewave.mesh.protocol` and must stay free of radio/BLE APIs so it can be unit-tested on the JVM.
 - **License:** GPL-3.0. Do not add dependencies that are incompatible with it.
+- **Relay:** multi-hop logic (routing, seen-cache, TTL, HELLO) lives in `MeshMessenger`/`Router`/`RoutingTable` and is covered by the in-memory mesh simulation in `MeshNetworkTest`; extend that test whenever relay behaviour changes.
