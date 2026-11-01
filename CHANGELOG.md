@@ -5,7 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- All user-facing text is now English (the UI was Italian up to v0.3.2): `NODES`, `STATE`, `SEND` / `ALL`, `sending…` / `sent` / `DELIVERED` / `FAILED`, `DEBUG: skip direct link (force relay)`. Changelog entries for earlier versions use the English labels.
+- The development language of the project is English (code, comments, commit messages, docs, UI). The ping payload remains the ham-radio greeting `CIAO - 73`.
 
 ## [0.3.2] - 2026-11-01
 
@@ -45,14 +47,14 @@ Multi-hop relay: messages now cross intermediate nodes to reach phones that are 
 - **Relay**: a node that receives a packet addressed to someone else forwards it. Next hop is chosen by `Router`: the destination itself if directly visible, else the neighbour a route points to, else a flood to all neighbours (never back to the packet's author).
 - **Loop and storm protection**: a seen-cache keyed by `(senderId, messageId)` drops duplicate copies, and a TTL (default 5) bounds how far a packet travels. Messages reach nodes up to 5 links away.
 - **Reachability**: nodes exchange `HELLO` packets (every 20 s and whenever the neighbour set changes) listing their direct neighbours. The node list now shows indirect nodes as `via <neighbour>`; routes expire after 60 s or as soon as the relay is no longer visible.
-- **Multi-hop ACKs**: acknowledgements are routed back the same way; the chat shows the number of relays crossed (`CONSEGNATO · 1 relay`).
-- **Debug switch** "ignora link diretto (forza relay)": the node never hands its own packets straight to their destination, so relaying can be tested with all phones in range. Enable it on both the sender and the receiver to force the ACK through the relay as well.
+- **Multi-hop ACKs**: acknowledgements are routed back the same way; the chat shows the number of relays crossed (`DELIVERED · 1 relay`).
+- **Debug switch** "skip direct link (force relay)": the node never hands its own packets straight to their destination, so relaying can be tested with all phones in range. Enable it on both the sender and the receiver to force the ACK through the relay as well.
 - Router, routing table, HELLO codec and a JVM mesh simulation (in-memory radio, up to 7 nodes) covering relay, forced relay, exactly-once delivery in a full mesh, TTL limits, route learning and expiry. 51 unit tests in total.
 
 ### Changed
 - Packet header v2 is 24 bytes: `[version][type][ttl][hops][senderId][destId][messageId]`. `destId` and `ttl`/`hops` are new; new packet type `HELLO`.
 - `MeshMessenger` now owns routing and exposes `nodes` (direct and indirect) instead of the UI reading peers from the transport.
-- "TUTTI" and broadcast ping now address every known node, direct or indirect.
+- "ALL" and broadcast ping now address every known node, direct or indirect.
 
 ### Breaking
 - v0.3.0 is **not wire-compatible** with v0.2.0 (protocol version 1 packets are dropped). Update every device.
@@ -68,8 +70,8 @@ Stable node identity and an application protocol on top of the BLE transport.
 ### Added
 - **Stable node ID**: 8 random bytes generated at first launch and persisted; announced in the BLE scan response together with the node name. Nodes are now identified by this ID instead of the rotating BLE address, so the nearby-nodes list and message senders always match.
 - **Packet format** with a 14-byte header `[version][type][senderId 8B][messageId 4B]` and types `MESSAGE`, `PING`, `ACK` (`protocol/Packet.kt`).
-- **Free-text chat**: type a message (up to 200 UTF-8 bytes) and send it to the selected node (**INVIA**) or to every visible node (**TUTTI**).
-- **Delivery ACK**: the receiver confirms each message; the chat shows `invio…`, `inviato`, `CONSEGNATO` or `FALLITO`. ACKs are retried once and duplicate messages are de-duplicated.
+- **Free-text chat**: type a message (up to 200 UTF-8 bytes) and send it to the selected node (**SEND**) or to every visible node (**ALL**).
+- **Delivery ACK**: the receiver confirms each message; the chat shows `sending…`, `sent`, `DELIVERED` or `FAILED`. ACKs are retried once and duplicate messages are de-duplicated.
 - `MeshMessenger`: protocol layer (framing, chat history, ACKs) that depends only on `MeshTransport`.
 - 16 unit tests for the packet codec and the advertisement format.
 - GPL-3.0 `LICENSE`.

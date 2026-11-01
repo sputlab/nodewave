@@ -132,11 +132,11 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
             }
         )
 
-        Panel(title = "NODI (${nodes.size})", modifier = Modifier.weight(1f)) {
+        Panel(title = "NODES (${nodes.size})", modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Switch(checked = ignoreDirect, onCheckedChange = vm::setIgnoreDirect)
                 Text(
-                    "  DEBUG: ignora link diretto (forza relay)",
+                    "  DEBUG: skip direct link (force relay)",
                     color = if (ignoreDirect) TacticalAmber else TacticalDim, fontFamily = Mono, fontSize = 11.sp
                 )
             }
@@ -145,9 +145,9 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
                 enabled = nodes.isNotEmpty() && state == TransportState.ACTIVE,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = TacticalAmber)
-            ) { Text("BROADCAST A TUTTI (CIAO - 73)", fontFamily = Mono, fontWeight = FontWeight.Bold) }
+            ) { Text("BROADCAST TO ALL (CIAO - 73)", fontFamily = Mono, fontWeight = FontWeight.Bold) }
             if (nodes.isEmpty()) {
-                Text("Nessun nodo in ascolto…", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
+                Text("No nodes in range…", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(nodes, key = { it.id }) { node ->
@@ -206,7 +206,7 @@ private fun Header(nodeName: String, nodeId: String, state: TransportState, acti
         Column(modifier = Modifier.weight(1f)) {
             Text("NODEWAVE // $nodeName [${nodeId.take(6)}]", color = TacticalGreen, fontFamily = Mono,
                 fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text("STATO: $state", fontFamily = Mono, fontSize = 12.sp,
+            Text("STATE: $state", fontFamily = Mono, fontSize = 12.sp,
                 color = when (state) {
                     TransportState.ACTIVE -> TacticalGreen
                     TransportState.IDLE, TransportState.STARTING -> TacticalAmber
@@ -253,10 +253,10 @@ private fun PeerRow(node: NodeEntry, selected: Boolean, enabled: Boolean, onSele
 private fun MessageLine(m: ChatMessage) {
     val time = remember(m.time) { SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(m.time)) }
     val (statusLabel, statusColor) = when (m.status) {
-        MessageStatus.SENDING -> "invio…" to TacticalDim
-        MessageStatus.SENT -> "inviato" to TacticalAmber
-        MessageStatus.DELIVERED -> "CONSEGNATO" to TacticalGreen
-        MessageStatus.FAILED -> "FALLITO" to TacticalRed
+        MessageStatus.SENDING -> "sending…" to TacticalDim
+        MessageStatus.SENT -> "sent" to TacticalAmber
+        MessageStatus.DELIVERED -> "DELIVERED" to TacticalGreen
+        MessageStatus.FAILED -> "FAILED" to TacticalRed
         MessageStatus.RECEIVED -> "" to TacticalGreen
     }
     Column(modifier = Modifier.padding(vertical = 2.dp)) {
@@ -289,7 +289,7 @@ private fun ChatInput(targetName: String?, enabled: Boolean, onSend: (String) ->
             singleLine = true,
             textStyle = TextStyle(fontFamily = Mono, fontSize = 13.sp),
             placeholder = {
-                Text(targetName?.let { "A $it…" } ?: "Seleziona un nodo", fontFamily = Mono, fontSize = 12.sp)
+                Text(targetName?.let { "To $it…" } ?: "Select a node", fontFamily = Mono, fontSize = 12.sp)
             },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { if (enabled && targetName != null) send() })
@@ -298,13 +298,13 @@ private fun ChatInput(targetName: String?, enabled: Boolean, onSend: (String) ->
             onClick = ::send,
             enabled = enabled && targetName != null && text.isNotBlank(),
             contentPadding = PaddingValues(horizontal = 10.dp)
-        ) { Text("INVIA", fontFamily = Mono, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        ) { Text("SEND", fontFamily = Mono, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
         OutlinedButton(
             onClick = { onBroadcast(text); text = "" },
             enabled = enabled && text.isNotBlank(),
             border = BorderStroke(1.dp, TacticalAmber),
             contentPadding = PaddingValues(horizontal = 10.dp)
-        ) { Text("TUTTI", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
+        ) { Text("ALL", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
     }
 }
 

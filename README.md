@@ -10,7 +10,7 @@ Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over
 - Stable per-install node ID, so peers are recognised even when BLE addresses rotate.
 - Live list of nodes: direct ones with signal strength (RSSI, dBm), indirect ones as `via <neighbour>`.
 - Multi-hop relay with TTL and duplicate suppression; delivery ACKs travel back across the relays.
-- Free-text chat to a selected node or to all nodes, with delivery status (`inviato` / `CONSEGNATO` / `FALLITO`), plus the number of relays crossed.
+- Free-text chat to a selected node or to all nodes, with delivery status (`sent` / `DELIVERED` / `FAILED`), plus the number of relays crossed.
 - Per-node ping and broadcast of "CIAO - 73".
 - On-screen `MESH_RADIO` log console.
 
@@ -33,8 +33,8 @@ On Xiaomi/MIUI, "Install via USB" may require a Mi account and a SIM; copy the A
 ## Try it
 
 1. Install on two phones and grant the requested permissions.
-2. Tap **START RADIO** on both. Each should list the other under *Nodi vicini*.
-3. Tap a node to select it, type a message and tap **INVIA** (or **TUTTI** for everyone), or use **PING (CIAO - 73)**. The other phone shows it and the sender's chat marks it `CONSEGNATO`.
+2. Tap **START RADIO** on both. Each should list the other under *NODES*.
+3. Tap a node to select it, type a message and tap **SEND** (or **ALL** for everyone), or use **PING (CIAO - 73)**. The other phone shows it and the sender's chat marks it `DELIVERED`.
 4. Follow the radio from a computer:
 
 ```sh
@@ -46,8 +46,8 @@ adb -s <serial> logcat -s MESH_RADIO   # with several devices connected
 
 1. Install the same version on all three phones and start the radio on each.
 2. Wait a few seconds: the node list of every phone should show the other two (indirect ones appear after the first neighbour announcement).
-3. Phones in the same room all see each other, so force the relay: on the **sender and the receiver** switch on *DEBUG: ignora link diretto*, leaving the third phone as it is.
-4. Send a message from the sender to the receiver. The receiver shows it with `1 relay` and the sender marks it `CONSEGNATO · 1 relay`.
+3. Phones in the same room all see each other, so force the relay: on the **sender and the receiver** switch on *DEBUG: skip direct link (force relay)*, leaving the third phone as it is.
+4. Send a message from the sender to the receiver. The receiver shows it with `1 relay` and the sender marks it `DELIVERED · 1 relay`.
 5. Alternatively, switch Bluetooth off on the relay phone and watch the indirect node disappear (it can take up to a minute for a stale route to expire if the neighbour announcement was missed).
 
 ## Permissions
