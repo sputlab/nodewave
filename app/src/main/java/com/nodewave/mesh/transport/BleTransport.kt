@@ -476,8 +476,12 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     }
 
     private fun onScanResult(result: ScanResult) {
+        stats.scanRaw.incrementAndGet()
         val info = NodeAdvertisement.decode(result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID))
-            ?: return // advertisement without NodeWave node info (e.g. scan response not merged yet)
+            ?: run {
+                stats.scanDropped.incrementAndGet() // advertisement without NodeWave node info (e.g. scan response not merged yet)
+                return
+            }
         if (info.nodeId == localNodeId) return
         lastScanResultAt = SystemClock.elapsedRealtime()
         fruitlessScanRestarts = 0
@@ -681,7 +685,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                         lastScanResultAt = now // it works for them, let the clock start again
                     } else {
                         val full = fruitlessScanRestarts > 0
-                        MeshLog.d("WATCHDOG: nothing heard for ${(now - lastScanResultAt) / 1000}s, " + if (full) "reopening the radio" else "restarting the scan")
+                        MeshLog.d("WATCHDOG: nothing heard for ${(now - lastScanResultAt) / 1000}s (scan callbacks=${stats.scanRaw.get()}, without node info=${stats.scanDropped.get()}, peers=${_peers.value.size}), " + if (full) "reopening the radio" else "restarting the scan")
                         stats.watchdogRestarts.incrementAndGet()
                         fruitlessScanRestarts++
                         lastScanResultAt = now
@@ -955,6 +959,8 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         val reusedOpen = AtomicInteger()
         val replies = AtomicInteger()
         val watchdogRestarts = AtomicInteger()
+        val scanRaw = AtomicInteger()
+        val scanDropped = AtomicInteger()
         val connectMs = AtomicLong()
         private val failures = ConcurrentHashMap<String, AtomicInteger>()
         private var last = ""
@@ -976,6 +982,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             val line = "LINKSTATS opened=${attempts.get()} ok=${ok.get()} failed=$failed " +
                 "${failures.entries.sortedBy { it.key }.joinToString(",", "{", "}") { "${it.key}=${it.value}" }} " +
                 "reusedInbound=${reusedInbound.get()} reusedOpen=${reusedOpen.get()} replies=${replies.get()} watchdog=${watchdogRestarts.get()} " +
+                "scanRaw=${scanRaw.get()} scanDropped=${scanDropped.get()} " +
                 "avgConnectMs=${if (ok.get() > 0) connectMs.get() / ok.get() else 0}"
             if (line != last) {
                 last = line

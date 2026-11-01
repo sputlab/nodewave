@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+### Added
+- Scan diagnostics: `LINKSTATS` and the watchdog message now report how many scan callbacks arrived and how many carried no NodeWave data, to tell a dead scanner from a filtering problem (a Mi Note 10 once stopped finding peers for over two hours while the watchdog restarted the scan 11 times; a manual stop/start fixed it).
+
 ### Changed
 - All user-facing text is now English (the UI was Italian up to v0.3.2): `NODES`, `STATE`, `SEND` / `ALL`, `sending…` / `sent` / `DELIVERED` / `FAILED`, `DEBUG: skip direct link (force relay)`. Changelog entries for earlier versions use the English labels.
 - The development language of the project is English (code, comments, commit messages, docs, UI). The ping payload remains the ham-radio greeting `CIAO - 73`.
