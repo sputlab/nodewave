@@ -2,14 +2,16 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.1.0** - two phones discover each other and exchange a "CIAO - 73" ping over pure BLE. See the [changelog](CHANGELOG.md).
+**Status: v0.2.0** - phones discover each other by stable node ID and exchange chat messages with delivery confirmation over pure BLE. See the [changelog](CHANGELOG.md).
 
-## Features (v0.1.0)
+## Features (v0.2.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
+- Stable per-install node ID, so peers are recognised even when BLE addresses rotate.
 - Live list of nearby nodes with signal strength (RSSI, dBm).
+- Free-text chat to a selected node or to all nodes, with delivery status (`inviato` / `CONSEGNATO` / `FALLITO`).
 - Per-node ping and broadcast of "CIAO - 73".
-- Received-messages box and on-screen `MESH_RADIO` log console.
+- On-screen `MESH_RADIO` log console.
 
 ## Requirements
 
@@ -31,7 +33,7 @@ On Xiaomi/MIUI, "Install via USB" may require a Mi account and a SIM; copy the A
 
 1. Install on two phones and grant the requested permissions.
 2. Tap **START RADIO** on both. Each should list the other under *Nodi vicini*.
-3. Tap **PING (CIAO - 73)** on one phone; the other shows the message.
+3. Tap a node to select it, type a message and tap **INVIA** (or **TUTTI** for everyone), or use **PING (CIAO - 73)**. The other phone shows it and the sender's chat marks it `CONSEGNATO`.
 4. Follow the radio from a computer:
 
 ```sh
@@ -54,19 +56,29 @@ Clean MVVM in Kotlin and Jetpack Compose (Material 3), with Coroutines and Flow 
 com.nodewave.mesh
 ├── MainActivity.kt        Compose UI, permission requests
 ├── MainViewModel.kt       StateFlow state for the UI
+├── protocol/
+│   ├── Packet.kt              14-byte header wire format (MESSAGE / PING / ACK)
+│   ├── NodeAdvertisement.kt   node ID + name in the BLE scan response
+│   ├── NodeIdentity.kt        persisted stable node ID
+│   └── MeshMessenger.kt       chat history, framing, delivery ACKs
 └── transport/
     ├── MeshTransport.kt   hardware-agnostic radio contract
     ├── BleTransport.kt    pure-BLE implementation
     └── MeshLog.kt         unified MESH_RADIO logger
 ```
 
-The UI never touches radio APIs; everything goes through `MeshTransport`. See [CLAUDE.md](CLAUDE.md) for the full rules (permissions, concurrency, timeouts, logging).
+The UI never touches radio APIs; everything goes through `MeshTransport`, and `MeshMessenger` adds the protocol on top without knowing about BLE. See [CLAUDE.md](CLAUDE.md) for the full rules (permissions, concurrency, timeouts, logging).
 
 ## Roadmap
 
-- **v0.2.0** - stable node IDs, packet header, free-text chat, delivery ACK.
 - **v0.3.0** - multi-hop relay.
+
+## Tests
+
+```sh
+./gradlew testDebugUnitTest   # packet codec and advertisement format
+```
 
 ## License
 
-No license has been chosen yet; until one is added, all rights are reserved by the authors.
+NodeWave is free software under the [GNU General Public License v3.0](LICENSE).

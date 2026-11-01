@@ -40,6 +40,24 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import com.nodewave.mesh.protocol.ChatMessage
+import com.nodewave.mesh.protocol.MeshMessenger
+import com.nodewave.mesh.protocol.MessageStatus
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.nodewave.mesh.transport.BleTransport
 import com.nodewave.mesh.transport.PeerNode
 import com.nodewave.mesh.transport.TransportState
@@ -71,7 +89,8 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
     val state by vm.transportState.collectAsStateWithLifecycle()
     val peers by vm.peers.collectAsStateWithLifecycle()
-    val received by vm.received.collectAsStateWithLifecycle()
+    val messages by vm.messages.collectAsStateWithLifecycle()
+    val selectedPeerId by vm.selectedPeerId.collectAsStateWithLifecycle()
     val logLines by vm.logLines.collectAsStateWithLifecycle()
 
     // API 31+ -> BLUETOOTH_SCAN/ADVERTISE/CONNECT; API 29-30 -> ACCESS_FINE_LOCATION (see BleTransport).
@@ -99,6 +118,7 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
     ) {
         Header(
             nodeName = vm.localNodeName,
+            nodeId = vm.localNodeId,
             state = state,
             active = active,
             onToggle = {
@@ -110,7 +130,7 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
             }
         )
 
-        Panel(title = "NODI VICINI (${peers.size})", modifier = Modifier.weight(1.2f)) {
+        Panel(title = "NODI VICINI (${peers.size})", modifier = Modifier.weight(1f)) {
             Button(
                 onClick = vm::broadcastPing,
                 enabled = peers.isNotEmpty() && state == TransportState.ACTIVE,
@@ -122,28 +142,34 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(peers, key = { it.id }) { peer ->
-                    PeerRow(peer, enabled = state == TransportState.ACTIVE, onPing = { vm.ping(peer.id) })
-                }
-            }
-        }
-
-        Panel(title = "MESSAGGI RICEVUTI (${received.size})", modifier = Modifier.weight(0.8f)) {
-            val listState = rememberLazyListState()
-            LaunchedEffect(received.size) {
-                if (received.isNotEmpty()) listState.animateScrollToItem(received.lastIndex)
-            }
-            LazyColumn(state = listState) {
-                items(received) { m ->
-                    Text(
-                        "[${m.time}] ${m.sender}${m.rssi?.let { " ($it dBm)" } ?: ""}\n  » ${m.text}",
-                        color = TacticalGreen, fontFamily = Mono, fontSize = 12.sp,
-                        modifier = Modifier.padding(vertical = 2.dp)
+                    PeerRow(
+                        peer = peer,
+                        selected = peer.id == selectedPeerId,
+                        enabled = state == TransportState.ACTIVE,
+                        onSelect = { vm.selectPeer(peer.id) },
+                        onPing = { vm.ping(peer.id) }
                     )
                 }
             }
         }
 
-        Panel(title = "CONSOLE MESH_RADIO", modifier = Modifier.weight(1.2f)) {
+        Panel(title = "CHAT (${messages.size})", modifier = Modifier.weight(1.3f)) {
+            val listState = rememberLazyListState()
+            LaunchedEffect(messages.size) {
+                if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+            }
+            LazyColumn(state = listState, modifier = Modifier.weight(1f, fill = false)) {
+                items(messages, key = { it.key }) { m -> MessageLine(m) }
+            }
+            ChatInput(
+                targetName = peers.firstOrNull { it.id == selectedPeerId }?.displayName,
+                enabled = state == TransportState.ACTIVE,
+                onSend = vm::sendText,
+                onBroadcast = vm::broadcastText
+            )
+        }
+
+        Panel(title = "CONSOLE MESH_RADIO", modifier = Modifier.weight(1f)) {
             val listState = rememberLazyListState()
             LaunchedEffect(logLines.size) {
                 if (logLines.isNotEmpty()) listState.scrollToItem(logLines.lastIndex)
@@ -162,14 +188,14 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
 }
 
 @Composable
-private fun Header(nodeName: String, state: TransportState, active: Boolean, onToggle: () -> Unit) {
+private fun Header(nodeName: String, nodeId: String, state: TransportState, active: Boolean, onToggle: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("NODEWAVE // $nodeName", color = TacticalGreen, fontFamily = Mono,
+            Text("NODEWAVE // $nodeName [${nodeId.take(6)}]", color = TacticalGreen, fontFamily = Mono,
                 fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text("STATO: $state", fontFamily = Mono, fontSize = 12.sp,
                 color = when (state) {
@@ -189,22 +215,80 @@ private fun Header(nodeName: String, state: TransportState, active: Boolean, onT
 }
 
 @Composable
-private fun PeerRow(peer: PeerNode, enabled: Boolean, onPing: () -> Unit) {
+private fun PeerRow(peer: PeerNode, selected: Boolean, enabled: Boolean, onSelect: () -> Unit, onPing: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF1B241E), RoundedCornerShape(6.dp))
+            .border(if (selected) 2.dp else 0.dp, if (selected) TacticalGreen else Color.Transparent, RoundedCornerShape(6.dp))
+            .clickable(onClick = onSelect)
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(peer.displayName, color = Color.White, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Text(peer.id, color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
+            Text("ID ${peer.id.take(6)}", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
             Text(peer.rssi?.let { "$it dBm" } ?: "-- dBm", color = TacticalAmber, fontFamily = Mono, fontSize = 12.sp)
         }
         OutlinedButton(onClick = onPing, enabled = enabled, border = BorderStroke(1.dp, TacticalGreen)) {
             Text("PING (CIAO - 73)", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
         }
+    }
+}
+
+@Composable
+private fun MessageLine(m: ChatMessage) {
+    val time = remember(m.time) { SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(m.time)) }
+    val (statusLabel, statusColor) = when (m.status) {
+        MessageStatus.SENDING -> "invio…" to TacticalDim
+        MessageStatus.SENT -> "inviato" to TacticalAmber
+        MessageStatus.DELIVERED -> "CONSEGNATO" to TacticalGreen
+        MessageStatus.FAILED -> "FALLITO" to TacticalRed
+        MessageStatus.RECEIVED -> "" to TacticalGreen
+    }
+    Column(modifier = Modifier.padding(vertical = 2.dp)) {
+        Text(
+            "[$time] ${if (m.outgoing) "→ ${m.peerName}" else "← ${m.peerName}"}${if (m.isPing) " (ping)" else ""}",
+            color = TacticalDim, fontFamily = Mono, fontSize = 10.sp
+        )
+        Row {
+            Text("» ${m.text}", color = if (m.outgoing) Color.White else TacticalGreen,
+                fontFamily = Mono, fontSize = 12.sp, modifier = Modifier.weight(1f, fill = false))
+            if (statusLabel.isNotEmpty()) {
+                Text("  $statusLabel", color = statusColor, fontFamily = Mono, fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatInput(targetName: String?, enabled: Boolean, onSend: (String) -> Unit, onBroadcast: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    fun send() { onSend(text); text = "" }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { if (it.toByteArray(Charsets.UTF_8).size <= MeshMessenger.MAX_TEXT_BYTES) text = it },
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            textStyle = TextStyle(fontFamily = Mono, fontSize = 13.sp),
+            placeholder = {
+                Text(targetName?.let { "A $it…" } ?: "Seleziona un nodo", fontFamily = Mono, fontSize = 12.sp)
+            },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { if (enabled && targetName != null) send() })
+        )
+        Button(
+            onClick = ::send,
+            enabled = enabled && targetName != null && text.isNotBlank(),
+            contentPadding = PaddingValues(horizontal = 10.dp)
+        ) { Text("INVIA", fontFamily = Mono, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        OutlinedButton(
+            onClick = { onBroadcast(text); text = "" },
+            enabled = enabled && text.isNotBlank(),
+            border = BorderStroke(1.dp, TacticalAmber),
+            contentPadding = PaddingValues(horizontal = 10.dp)
+        ) { Text("TUTTI", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
     }
 }
 

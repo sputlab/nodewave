@@ -4,6 +4,9 @@ import android.app.Application
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.nodewave.mesh.protocol.ChatMessage
+import com.nodewave.mesh.protocol.MeshMessenger
+import com.nodewave.mesh.protocol.NodeIdentity
 import com.nodewave.mesh.transport.BleTransport
 import com.nodewave.mesh.transport.MeshLog
 import com.nodewave.mesh.transport.MeshTransport
@@ -12,36 +15,27 @@ import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-data class ReceivedMessage(val time: String, val sender: String, val text: String, val rssi: Int?)
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val transport: MeshTransport = BleTransport(application)
-
+    val localNodeId: String = NodeIdentity.getOrCreate(application)
     val localNodeName: String = Build.MODEL
+
+    private val transport: MeshTransport = BleTransport(application, localNodeId)
+    private val messenger = MeshMessenger(transport, localNodeId, viewModelScope)
+
     val transportState: StateFlow<TransportState> = transport.state
     val peers: StateFlow<List<PeerNode>> = transport.discoveredPeers
+    val messages: StateFlow<List<ChatMessage>> = messenger.messages
     val logLines: StateFlow<List<String>> = MeshLog.lines
 
-    private val _received = MutableStateFlow<List<ReceivedMessage>>(emptyList())
-    val received: StateFlow<List<ReceivedMessage>> = _received.asStateFlow()
+    private val _selectedPeerId = MutableStateFlow<String?>(null)
+    val selectedPeerId: StateFlow<String?> = _selectedPeerId.asStateFlow()
 
     init {
-        viewModelScope.launch {
-            transport.incomingPayloads.collect { payload ->
-                val text = payload.rawBytes.toString(Charsets.UTF_8)
-                MeshLog.d("RECEIVED '$text' from ${payload.senderId}")
-                val time = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
-                _received.update { it + ReceivedMessage(time, payload.senderId, text, payload.rssi) }
-            }
-        }
+        MeshLog.d("Local node ${localNodeId.take(6)} ($localNodeName)")
     }
 
     fun startRadio() {
@@ -52,19 +46,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { transport.stop() }
     }
 
-    fun ping(peerId: String) {
-        viewModelScope.launch { transport.send(peerId, PING_TEXT.toByteArray(Charsets.UTF_8)) }
+    fun selectPeer(peerId: String) {
+        _selectedPeerId.value = if (_selectedPeerId.value == peerId) null else peerId
     }
 
-    fun broadcastPing() {
-        viewModelScope.launch { transport.broadcast(PING_TEXT.toByteArray(Charsets.UTF_8)) }
+    fun ping(peerId: String) = messenger.sendPing(peerId)
+
+    fun broadcastPing() = messenger.broadcastPing()
+
+    fun sendText(text: String) {
+        val trimmed = text.trim()
+        val target = _selectedPeerId.value
+        if (trimmed.isEmpty() || target == null) return
+        messenger.sendText(target, trimmed)
+    }
+
+    fun broadcastText(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isNotEmpty()) messenger.broadcastText(trimmed)
     }
 
     override fun onCleared() {
         runBlocking { transport.stop() }
-    }
-
-    companion object {
-        const val PING_TEXT = "CIAO - 73"
     }
 }

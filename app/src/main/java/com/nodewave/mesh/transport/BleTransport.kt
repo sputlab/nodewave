@@ -26,6 +26,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.ParcelUuid
 import androidx.core.content.ContextCompat
+import com.nodewave.mesh.protocol.NodeAdvertisement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -53,24 +54,26 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Pure-BLE [MeshTransport]: every node is simultaneously GATT server (receives writes),
+ * Pure-BLE [MeshTransport]: peers are identified by their stable node ID (carried in the scan
+ * response); the current BLE address of each peer is tracked in [addressByNodeId].
+ * Every node is simultaneously GATT server (receives writes),
  * advertiser + scanner (discovery) and, on demand, short-lived GATT client (sends).
  *
  * Permissions are verified in [hasRequiredPermissions] before any radio call, hence the lint suppression.
  */
 @SuppressLint("MissingPermission")
-class BleTransport(context: Context) : MeshTransport {
+class BleTransport(context: Context, private val localNodeId: String) : MeshTransport {
 
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("6e0d7a10-4e57-4c0e-9b1f-6d6573680001")
         val CHARACTERISTIC_UUID: UUID = UUID.fromString("6e0d7a10-4e57-4c0e-9b1f-6d6573680002")
 
-        /** Manufacturer id 0xFFFF = reserved for testing; carries the node name in the scan response. */
+        /** Manufacturer id 0xFFFF = reserved for testing; carries node ID + name in the scan response. */
         private const val MANUFACTURER_ID = 0xFFFF
-        private const val MAX_NAME_BYTES = 24
         private const val OP_TIMEOUT_MS = 5000L
         private const val MTU_TIMEOUT_MS = 2000L
         private const val DISCONNECT_TIMEOUT_MS = 1000L
@@ -105,6 +108,9 @@ class BleTransport(context: Context) : MeshTransport {
 
     private val _incoming = MutableSharedFlow<IncomingPayload>(extraBufferCapacity = 64)
     override val incomingPayloads: Flow<IncomingPayload> = _incoming.asSharedFlow()
+
+    /** nodeId -> latest BLE address seen in a scan (addresses may rotate). */
+    private val addressByNodeId = ConcurrentHashMap<String, String>()
 
     @Volatile private var gattServer: BluetoothGattServer? = null
     @Volatile private var advertiseCallback: AdvertiseCallback? = null
@@ -174,6 +180,7 @@ class BleTransport(context: Context) : MeshTransport {
         runCatching { gattServer?.close() }.onFailure { MeshLog.e("GATT server close failed", it) }
         gattServer = null
         _peers.value = emptyList()
+        addressByNodeId.clear()
     }
 
     private fun setState(new: TransportState) {
@@ -227,7 +234,8 @@ class BleTransport(context: Context) : MeshTransport {
                         "prepared=$preparedWrite needResp=$responseNeeded accepted=$ok"
                 )
                 if (ok) {
-                    val rssi = _peers.value.firstOrNull { it.id == device.address }?.rssi
+                    val peerId = addressByNodeId.entries.firstOrNull { it.value == device.address }?.key
+                    val rssi = _peers.value.firstOrNull { it.id == peerId }?.rssi
                     _incoming.tryEmit(IncomingPayload(device.address, value!!, rssi))
                 }
                 if (responseNeeded) {
@@ -286,10 +294,10 @@ class BleTransport(context: Context) : MeshTransport {
             .build()
         val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
-            .addManufacturerData(MANUFACTURER_ID, encodeName(localNodeName))
+            .addManufacturerData(MANUFACTURER_ID, NodeAdvertisement.encode(localNodeId, localNodeName))
             .build()
 
-        MeshLog.d("Starting advertising as '$localNodeName'")
+        MeshLog.d("Starting advertising as '$localNodeName' [${localNodeId.take(6)}]")
         advertiseCallback = callback
         advertiser.startAdvertising(settings, data, scanResponse, callback)
         val error = withTimeoutOrNull(OP_TIMEOUT_MS) { started.await() }
@@ -298,12 +306,6 @@ class BleTransport(context: Context) : MeshTransport {
             advertiseCallback = null
             throw IOException("Advertising failed errorCode=$error")
         }
-    }
-
-    private fun encodeName(name: String): ByteArray {
-        var trimmed = name
-        while (trimmed.toByteArray(Charsets.UTF_8).size > MAX_NAME_BYTES) trimmed = trimmed.dropLast(1)
-        return trimmed.toByteArray(Charsets.UTF_8)
     }
 
     // ---------------------------------------------------------------- scanning
@@ -324,8 +326,9 @@ class BleTransport(context: Context) : MeshTransport {
                 delay(PRUNE_INTERVAL_MS)
                 val limit = System.currentTimeMillis() - PEER_TTL_MS
                 _peers.update { list ->
-                    list.filter { it.lastSeenTimestamp >= limit }.also {
-                        if (it.size != list.size) MeshLog.d("Pruned ${list.size - it.size} stale peer(s)")
+                    list.filter { it.lastSeenTimestamp >= limit }.also { kept ->
+                        if (kept.size != list.size) MeshLog.d("Pruned ${list.size - kept.size} stale peer(s)")
+                        addressByNodeId.keys.retainAll(kept.map { it.id }.toSet())
                     }
                 }
             }
@@ -359,21 +362,22 @@ class BleTransport(context: Context) : MeshTransport {
     }
 
     private fun onScanResult(result: ScanResult) {
-        val address = result.device.address
-        val advertisedName = result.scanRecord
-            ?.getManufacturerSpecificData(MANUFACTURER_ID)
-            ?.toString(Charsets.UTF_8)
-            ?.takeIf { it.isNotBlank() }
+        val info = NodeAdvertisement.decode(result.scanRecord?.getManufacturerSpecificData(MANUFACTURER_ID))
+            ?: return // advertisement without NodeWave node info (e.g. scan response not merged yet)
+        if (info.nodeId == localNodeId) return
+        addressByNodeId[info.nodeId] = result.device.address
         _peers.update { list ->
-            val existing = list.firstOrNull { it.id == address }
+            val existing = list.firstOrNull { it.id == info.nodeId }
             val updated = PeerNode(
-                id = address,
-                displayName = advertisedName ?: existing?.displayName ?: address,
+                id = info.nodeId,
+                displayName = info.name ?: existing?.displayName ?: info.nodeId.take(6),
                 rssi = result.rssi,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
-            if (existing == null) MeshLog.d("Peer found ${updated.displayName} [$address] rssi=${result.rssi}")
-            (list.filterNot { it.id == address } + updated).sortedBy { it.id }
+            if (existing == null) {
+                MeshLog.d("Peer found ${updated.displayName} [${info.nodeId.take(6)}] @${result.device.address} rssi=${result.rssi}")
+            }
+            (list.filterNot { it.id == info.nodeId } + updated).sortedBy { it.id }
         }
     }
 
@@ -389,7 +393,12 @@ class BleTransport(context: Context) : MeshTransport {
                 setState(TransportState.ERROR_MISSING_PERMISSIONS)
                 return@withLock Result.failure(SecurityException("Missing BLE runtime permissions"))
             }
-            writeToPeer(targetPeerId, payload)
+            val address = addressByNodeId[targetPeerId]
+            if (address == null) {
+                MeshLog.e("send() rejected: peer ${targetPeerId.take(6)} not currently visible")
+                return@withLock Result.failure(IllegalStateException("Peer not visible"))
+            }
+            writeToPeer(address, payload)
         }
 
     override suspend fun broadcast(payload: ByteArray): Result<Unit> {
