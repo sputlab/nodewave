@@ -69,6 +69,12 @@ class MeshMessenger(
         const val MAX_TEXT_BYTES = 180
         private const val MAX_HISTORY = 500
         private const val MAX_SEEN = 1024
+        /**
+         * A relay forwards a given packet at most once per this window, which stops floods echoing around a loop.
+         * It must stay shorter than [RETRANSMIT_AFTER_MS]: a resend (same sender and message id) has to be
+         * forwarded again, or a lost ACK could never be recovered across a relay.
+         */
+        private const val RELAY_DEDUPE_MS = 8_000L
         private const val ACK_ATTEMPTS = 2
         private const val ACK_RETRY_DELAY_MS = 700L
         /** No ACK after this long: send the message again (the peer may have restarted and lost its sessions). */
@@ -121,6 +127,8 @@ class MeshMessenger(
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val seen = LinkedHashSet<String>()
+    /** packet id -> when this node last forwarded it as a relay */
+    private val relayed = LinkedHashMap<String, Long>()
     private val sessionWaiters = HashMap<String, CompletableDeferred<Session?>>()
     /** peer -> (link id, when it last sent us something authentic directly): see [LINK_HINT_TTL_MS]. */
     private val linkHints = HashMap<String, Pair<String, Long>>()
@@ -458,14 +466,19 @@ class MeshMessenger(
 
     private fun relay(packet: Packet) {
         if (packet.type == PacketType.HELLO) return // hellos are strictly one-hop
-        if (!markSeen(packet)) {
-            MeshLog.d("Relay: already seen ${packet.uid.take(8)}, dropped")
+        val now = clock()
+        val last = relayed[packet.uid]
+        if (last != null && now - last < RELAY_DEDUPE_MS) {
+            MeshLog.d("Relay: ${packet.uid.take(8)} was forwarded ${now - last} ms ago, dropped")
             return
         }
         if (packet.ttl <= 1) {
             MeshLog.d("Relay: TTL exhausted for ${packet.uid.take(8)} -> ${packet.destId.take(6)}, dropped")
             return
         }
+        relayed.remove(packet.uid) // re-insert so the oldest entries are the ones to go
+        relayed[packet.uid] = now
+        if (relayed.size > MAX_SEEN) relayed.remove(relayed.keys.first())
         scope.launch { dispatch(packet.forwarded(), originId = packet.senderId) }
     }
 

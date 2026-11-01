@@ -546,6 +546,41 @@ class MeshNetworkTest {
     }
 
     @Test
+    fun aResendTravelsThroughARelayThatAlreadyForwardedTheFirstCopy() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id)
+        a.messenger.sendText(c.id, "warm up the sessions")
+        settle()
+        var lost = false
+        net.dropIf = { p -> (Packet.decode(p)?.type == PacketType.ACK && !lost).also { if (it) lost = true } }
+
+        a.messenger.sendText(c.id, "ack gets lost on the way back")
+        advanceTimeBy(1_000)
+        assertEquals(MessageStatus.SENT, a.sent().last().status) // delivered to c, but a never heard back
+        advanceTimeBy(12_000) // a resends after 10 s; b already forwarded the first copy
+
+        assertEquals(listOf("warm up the sessions", "ack gets lost on the way back"), c.received().map { it.text }) // no duplicate
+        assertTrue(a.sent().all { it.status == MessageStatus.DELIVERED })
+    }
+
+    @Test
+    fun aRelayStillDropsEchoesOfAPacketItJustForwarded() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net); val c = node(net)
+        net.link(a.id, b.id); net.link(b.id, c.id)
+        a.messenger.sendText(c.id, "once")
+        settle()
+        val forwarded = net.wireOfType(PacketType.MESSAGE).single { it.hops == 0 }
+
+        net.deliveries.clear()
+        net.inject(b.id, forwarded.encode()) // the same packet again within moments
+        settle()
+
+        assertFalse(net.deliveries.contains(b.id to c.id)) // not forwarded a second time
+    }
+
+    @Test
     fun aMessageNobodyAcknowledgesEventuallyFails() = runTest {
         val net = network()
         val a = node(net); val b = node(net)

@@ -19,10 +19,10 @@ Forward secrecy, key rotation, authenticated HELLOs and a much more reliable rad
 - **Authenticated HELLOs.** Neighbour announcements are sealed with the session (confidential and authenticated) and carry an increasing sequence number, so they cannot be forged, read by eavesdroppers or replayed to bring back a stale route. A neighbour without a session first gets a handshake.
 - **Replies on the same connection.** The GATT server gained a TX characteristic that notifies; the client subscribes. An ACK or a handshake response is sent back as a notification on the link that carried the request, and a send that expects an answer keeps its connection open for a short while (2.5 s) so follow-ups reuse it. A direct exchange (handshake, message, ACK) now needs one connection instead of several, and the "connection both ways at once" collisions largely disappear.
 - **Resend.** A message with no ACK after 10 s is sent again (twice at most, then `FAILED`); the receiver recognises copies. This also recovers the message sent right after a peer restarted and lost its sessions.
-- **Radio watchdog.** If nothing is heard for 90 s (doubling up to 10 min when really alone) the scan is restarted, and advertising is refreshed every 4 minutes. Seen on an Honor View 10: it silently stopped scanning and advertising while the app still said `ACTIVE`; restarting the radio cured it.
+- **Radio watchdog.** If nothing is heard for 90 s the scan is restarted; if that does not help the whole radio (GATT server, advertising, scan) is reopened. The wait doubles after each fruitless restart (up to 10 min), nothing is restarted while a link is open or a packet arrived in the last 30 s, and advertising is refreshed every 4 minutes. Seen on an Honor View 10 and on a Mi Note 10: the app said `ACTIVE` but scanning had silently died (0 nodes for an hour); restarting only the scan did not help the Mi, a full restart did.
 - `LINKSTATS` log line every 30 s (connections opened/ok/failed by error code, reuses, replies, watchdog restarts).
 - Connection priority HIGH on outgoing links (short connection interval for the burst).
-- 146 unit tests (new: ECDSA and DER signature handling, the complete session manager, key rotation, forward-secrecy wiping, replayed and forged handshakes/HELLOs/ACKs, simultaneous handshakes, restarts, resends, link reuse). Eight security checks were each broken on purpose to confirm a test fails.
+- 148 unit tests (new: ECDSA and DER signature handling, the complete session manager, key rotation, forward-secrecy wiping, replayed and forged handshakes/HELLOs/ACKs, simultaneous handshakes, restarts, resends, link reuse). Eight security checks were each broken on purpose to confirm a test fails.
 
 ### Changed
 - Packet format version 4: `KEY` payload is the 195-byte signed handshake message; MESSAGE/PING/ACK/HELLO payloads are `sid | nonce | ciphertext | tag` (32 bytes of overhead, text limit stays 180 bytes).
@@ -33,24 +33,30 @@ Forward secrecy, key rotation, authenticated HELLOs and a much more reliable rad
 ### Fixed
 - **Sessions could break after two minutes when both phones started a handshake at the same time.** Each side adopted the newest session and retired the others, but the two picked different ones; once the grace period ended each dropped the session the other still used and packets stopped decrypting until a new handshake. Found by breaking a security test on purpose and noticing the mutation survived. Adoption now retires only sessions of the same role, and sessions are bounded by age.
 - A message sent just after the other phone restarted was lost silently (now resent, see above).
+- **A resend could never cross a relay that had already forwarded the first copy.** The relay's duplicate filter was permanent, so when the ACK was lost on the way back the sender's resend reached the relay (seen in the logs: `Relay: already seen`) and was dropped, and the destination never got the chance to re-acknowledge. Relays now suppress duplicates for 8 s only (shorter than the 10 s resend delay); the destination still shows each message once.
 
-### Measured
-Same scripted pings through the UI, Mi Note 10 <-> Honor View 10 (the Sony could not be unlocked for this run):
+### Measured and verified on devices
+Same scripted pings through the UI, three phones next to each other (Mi Note 10 and Honor View 10 send, the Sony receives and answers):
 
 | | 0.4.0 | 0.5.0 |
 |---|---|---|
-| Pings delivered | 18/18 | 24/24 |
-| Delivery time, median (p90) | 2.7 s (3.8 s) | 1.3 s (1.5 s) |
-| Connections opened | 101 for 18 pings | 43 for 24 pings |
-| Connections failed | 12% (Honor 23%) | 2% (Honor 5%) |
+| Pings delivered | 18/18 | 18/18 |
+| Delivery time, median (p90) | 2.7 s (3.8 s) | 1.4 s (1.7 s) |
+| Connections opened | 101 | 68 |
+| Connections failed | 12% (Honor 23%, Sony 8%) | 4% (Honor 5%, Sony 0%) |
 
-Small samples (a single failure in the new run), on two phones, with the phones next to each other: read it as "clearly better", not as a guarantee.
+A Mi Note 10 <-> Honor View 10 run of 24 pings gave a median of 1.3 s and 1 failed connection out of 43. One ping in the three-phone run took 14.7 s (a resend). The Honor -> Sony pings could not be driven by the script (their button is off screen on the Honor), so that direction is not part of the numbers. Small samples, phones next to each other: read it as "clearly better", not as a guarantee.
+
+Also checked on the phones:
+- encrypted relay Mi -> Honor -> Sony with the debug switch on both ends: delivered with `relays=1`, ACK back through the Honor (about 8 s, every hop went through the Honor, whose links produced several retried errors);
+- screen off: the Sony (display off for over a minute) and the Honor (with *App launch > Manage manually*) received a ping and acknowledged it in about a second;
+- watchdog: with the phone alone it restarted the scan after 104 s and reopened the whole radio after 181 s with no error, and the phone then found the Honor again.
 
 ### Breaking
 - v0.5.0 is **not wire-compatible** with earlier versions (protocol version 4). Update every device. Node IDs, identity keys and chat history are kept.
 
 ### Known limitations
-- Not verified on hardware: key rotation after an hour (simulation only, it reuses the handshake path), the radio watchdog (needs a phone to lose its radio on its own), real Doze, three-phone encrypted relay with the new transport. See [docs/SECURITY.md](docs/SECURITY.md) for the security limits; the code has not been independently audited.
+- Not verified on hardware: key rotation after an hour (simulation only, it reuses the handshake path), real Doze, and a phone losing its scan on its own while the watchdog is running (the escalation was only exercised with the phone alone). The Honor's and the Sony's links still produce transient errors (`133`, `62`, `19`) that the retries hide, so a relayed delivery can take several seconds. See [docs/SECURITY.md](docs/SECURITY.md) for the security limits; the code has not been independently audited.
 
 ## [0.4.0] - 2026-11-01
 

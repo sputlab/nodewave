@@ -109,9 +109,12 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         private const val REAPER_INTERVAL_MS = 200L
         private const val STATS_INTERVAL_MS = 30_000L
         /**
-         * Some phones (an Honor View 10 was seen) silently lose scanning/advertising while the app still
-         * believes the radio is on. If nothing is heard for this long the scan is restarted; the wait doubles
-         * after each fruitless restart (up to [MAX_SCAN_SILENCE_MS]) so a node that is simply alone stays quiet.
+         * Some phones (an Honor View 10 and a Mi Note 10 were seen) silently lose scanning while the app still
+         * believes the radio is on. If nothing is heard for this long the scan is restarted; if that did not
+         * help the whole radio (GATT server, advertising, scan) is reopened, which is what stopping and
+         * starting the radio by hand does and was the only thing that cured the Mi. The wait doubles after
+         * each fruitless restart (up to [MAX_SCAN_SILENCE_MS]) so a node that is simply alone stays quiet,
+         * and nothing is restarted while a link is open or a packet arrived recently.
          */
         private const val SCAN_SILENCE_MS = 90_000L
         private const val MAX_SCAN_SILENCE_MS = 600_000L
@@ -119,6 +122,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         /** Advertising is restarted this often, cheaply, in case it died unnoticed. */
         private const val ADV_REFRESH_MS = 240_000L
         private const val RESTART_PAUSE_MS = 500L
+        private const val RECENT_TRAFFIC_MS = 30_000L
         private const val DESIRED_MTU = 247
 
         fun requiredPermissions(): Array<String> =
@@ -162,6 +166,8 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     private var watchdogJob: Job? = null
     @Volatile private var lastScanResultAt = SystemClock.elapsedRealtime()
     @Volatile private var fruitlessScanRestarts = 0
+    /** Last time anything arrived over a link (a write to our server or a notification), as a sign the radio works. */
+    @Volatile private var lastInboundAt = 0L
     @Volatile private var advertisedName = ""
     @Volatile private var advertiseCallback: AdvertiseCallback? = null
     private var scanJob: Job? = null
@@ -328,6 +334,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                         "prepared=$preparedWrite needResp=$responseNeeded accepted=$ok"
                 )
                 if (ok) {
+                    lastInboundAt = SystemClock.elapsedRealtime()
                     val peerId = addressByNodeId.entries.firstOrNull { it.value == device.address }?.key
                     val rssi = _peers.value.firstOrNull { it.id == peerId }?.rssi
                     _incoming.tryEmit(IncomingPayload("s:${device.address}", value!!, rssi))
@@ -669,12 +676,21 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                 val now = SystemClock.elapsedRealtime()
                 val limit = minOf(SCAN_SILENCE_MS shl fruitlessScanRestarts.coerceAtMost(4), MAX_SCAN_SILENCE_MS)
                 if (now - lastScanResultAt >= limit) {
-                    MeshLog.d("WATCHDOG: nothing heard for ${(now - lastScanResultAt) / 1000}s, restarting the scan")
-                    stats.watchdogRestarts.incrementAndGet()
-                    fruitlessScanRestarts++
-                    lastScanResultAt = now
-                    lifecycleMutex.withLock {
-                        if (_state.value == TransportState.ACTIVE) runCatching { restartScan() }.onFailure { MeshLog.e("Scan restart failed", it) }
+                    val busy = clientLinks.isNotEmpty() || serverLinks.isNotEmpty() || now - lastInboundAt < RECENT_TRAFFIC_MS
+                    if (busy) {
+                        lastScanResultAt = now // it works for them, let the clock start again
+                    } else {
+                        val full = fruitlessScanRestarts > 0
+                        MeshLog.d("WATCHDOG: nothing heard for ${(now - lastScanResultAt) / 1000}s, " + if (full) "reopening the radio" else "restarting the scan")
+                        stats.watchdogRestarts.incrementAndGet()
+                        fruitlessScanRestarts++
+                        lastScanResultAt = now
+                        lifecycleMutex.withLock {
+                            if (_state.value == TransportState.ACTIVE) {
+                                runCatching { if (full) reopenRadio() else restartScan() }
+                                    .onFailure { MeshLog.e("Radio restart failed", it) }
+                            }
+                        }
                     }
                 }
                 if (now - lastAdvRefresh >= ADV_REFRESH_MS) {
@@ -692,6 +708,22 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         scanJob?.cancel() // awaitClose stops the scanner
         scanJob = null
         delay(RESTART_PAUSE_MS)
+        startScanJob(adapter)
+    }
+
+    /** Closes and reopens GATT server, advertising and scan, keeping the peer table and the state. */
+    private suspend fun reopenRadio() {
+        val adapter = bluetoothManager?.adapter ?: return
+        clientLinks.values.toList().forEach { it.close() }
+        serverLinks.clear()
+        scanJob?.cancel(); scanJob = null
+        advertiseCallback?.let { runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(it) } }
+        advertiseCallback = null
+        runCatching { gattServer?.close() }
+        gattServer = null
+        delay(RESTART_PAUSE_MS * 2)
+        openGattServer()
+        startAdvertising(adapter, advertisedName)
         startScanJob(adapter)
     }
 
@@ -792,6 +824,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
 
         private fun onNotification(value: ByteArray) {
             stats.replies.incrementAndGet()
+            lastInboundAt = SystemClock.elapsedRealtime()
             touch(REPLY_IDLE_MS) // the peer may follow up on this link
             _incoming.tryEmit(IncomingPayload(id, value))
         }
