@@ -8,9 +8,14 @@ import com.nodewave.mesh.protocol.ChatMessage
 import com.nodewave.mesh.protocol.Group
 import com.nodewave.mesh.protocol.MeshMessenger
 import com.nodewave.mesh.protocol.NodeEntry
+import com.nodewave.mesh.transport.BenchResult
 import com.nodewave.mesh.transport.MeshLog
 import com.nodewave.mesh.transport.TransportState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -106,4 +111,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendGroupText(groupId: String, text: String) = text.trim().takeIf { it.isNotEmpty() }?.let { messenger.sendGroupText(groupId, it) } ?: false
+
+    // ---- link benchmark
+
+    private val _benchResults = MutableStateFlow<List<BenchResult>>(emptyList())
+    val benchResults: StateFlow<List<BenchResult>> = _benchResults.asStateFlow()
+    private val _benchBusy = MutableStateFlow(false)
+    val benchBusy: StateFlow<Boolean> = _benchBusy.asStateFlow()
+    private val _benchRepeatPeer = MutableStateFlow<String?>(null)
+    val benchRepeatPeer: StateFlow<String?> = _benchRepeatPeer.asStateFlow()
+    private var repeatJob: Job? = null
+
+    private suspend fun benchOnce(peerId: String) {
+        if (!_benchBusy.compareAndSet(expect = false, update = true)) return
+        try {
+            val result = engine.benchmark.benchmark(peerId)
+            _benchResults.update { (listOf(result) + it).take(40) }
+        } finally {
+            _benchBusy.value = false
+        }
+    }
+
+    fun runBench(peerId: String) {
+        engine.scope.launch { benchOnce(peerId) }
+    }
+
+    /** Repeats the benchmark against [peerId] every 20 s (walk away and watch the numbers); null stops it. */
+    fun setBenchRepeat(peerId: String?) {
+        repeatJob?.cancel()
+        _benchRepeatPeer.value = peerId
+        if (peerId == null) return
+        repeatJob = engine.scope.launch {
+            while (true) {
+                benchOnce(peerId)
+                delay(20_000)
+            }
+        }
+    }
 }

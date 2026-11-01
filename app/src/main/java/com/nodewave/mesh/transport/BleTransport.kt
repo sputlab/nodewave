@@ -74,7 +74,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Permissions are verified in [hasRequiredPermissions] before any radio call, hence the lint suppression.
  */
 @SuppressLint("MissingPermission")
-class BleTransport(context: Context, private val localNodeId: String) : MeshTransport {
+class BleTransport(context: Context, private val localNodeId: String) : MeshTransport, LinkBenchmark {
 
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("6e0d7a10-4e57-4c0e-9b1f-6d6573680001")
@@ -87,6 +87,11 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         /** Manufacturer id 0xFFFF = reserved for testing; carries node ID + name in the scan response. */
         private const val MANUFACTURER_ID = 0xFFFF
         private const val OP_TIMEOUT_MS = 5000L
+        /** A benchmark mode sends this much payload (about 100 frames at the usual MTU). */
+        private const val BENCH_BYTES = 24_000
+        private const val BENCH_FRAME_MAX = 512
+        private const val BENCH_WRITE_TIMEOUT_MS = 4000L
+        private const val BENCH_REPLY_TIMEOUT_MS = 3000L
         /** Background (low-priority) sends give up on a stuck step sooner, to free the radio. */
         private const val LOW_PRIORITY_STEP_TIMEOUT_MS = 2000L
         /**
@@ -331,11 +336,15 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                 value: ByteArray?
             ) {
                 val ok = characteristic.uuid == CHARACTERISTIC_UUID && value != null && !preparedWrite && offset == 0
-                MeshLog.d(
-                    "GATT server write from ${device.address} len=${value?.size} " +
-                        "prepared=$preparedWrite needResp=$responseNeeded accepted=$ok"
-                )
-                if (ok) {
+                if (value == null || !BenchFrame.isBench(value)) {
+                    MeshLog.d(
+                        "GATT server write from ${device.address} len=${value?.size} " +
+                            "prepared=$preparedWrite needResp=$responseNeeded accepted=$ok"
+                    )
+                }
+                if (ok && BenchFrame.isBench(value!!)) {
+                    onBenchFrame(device.address, value)
+                } else if (ok) {
                     lastInboundAt = SystemClock.elapsedRealtime()
                     val peerId = addressByNodeId.entries.firstOrNull { it.value == device.address }?.key
                     val rssi = _peers.value.firstOrNull { it.id == peerId }?.rssi
@@ -500,6 +509,90 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                 MeshLog.d("Peer found ${updated.displayName} [${info.nodeId.take(6)}] @${result.device.address} rssi=${result.rssi}")
             }
             (list.filterNot { it.id == info.nodeId } + updated).sortedBy { it.id }
+        }
+    }
+
+    // ---------------------------------------------------------------- benchmark
+
+    /** Per remote device, what the benchmark frames of the current run have delivered so far. */
+    private class BenchRx(var runId: Int = 0, var frames: Int = 0, var bytes: Int = 0)
+    private val benchRx = ConcurrentHashMap<String, BenchRx>()
+
+    /** Server side: counts DATA frames and answers an END frame with what arrived (as a notification). */
+    private fun onBenchFrame(address: String, bytes: ByteArray) {
+        lastInboundAt = SystemClock.elapsedRealtime()
+        val rx = benchRx.getOrPut(address) { BenchRx() }
+        when (val f = BenchFrame.parse(bytes)) {
+            is BenchFrame.Parsed.Data -> synchronized(rx) {
+                if (rx.runId != f.runId) { rx.runId = f.runId; rx.frames = 0; rx.bytes = 0 }
+                rx.frames++; rx.bytes += f.size
+            }
+            is BenchFrame.Parsed.End -> {
+                val reply = synchronized(rx) {
+                    if (rx.runId != f.runId) BenchFrame.reply(f.runId, 0, 0) else BenchFrame.reply(f.runId, rx.frames, rx.bytes)
+                }
+                scope.launch { notifyOnServerLink(address, reply) }
+            }
+            else -> Unit
+        }
+    }
+
+    override suspend fun benchmark(peerId: String): BenchResult = withContext(Dispatchers.IO) {
+        val label = describe(peerId)
+        val name = _peers.value.firstOrNull { it.id == peerId }?.displayName ?: peerId.take(6)
+        fun failed(why: String, base: BenchResult = BenchResult(peerId, name)) = base.copy(error = why).also { MeshLog.e("BENCH $label: $why") }
+        if (_state.value != TransportState.ACTIVE) return@withContext failed("radio not active")
+        val address = addressByNodeId[peerId] ?: return@withContext failed("peer not visible")
+        val rssiStart = _peers.value.firstOrNull { it.id == peerId }?.rssi
+        connectMutex.withLock {
+            clientLinks[address]?.close() // measure a link of our own, connection setup included
+            val link = ClientLink(address, label)
+            clientLinks[address] = link
+            val t0 = SystemClock.elapsedRealtime()
+            val opened = link.open(OP_TIMEOUT_MS)
+            val connectMs = SystemClock.elapsedRealtime() - t0
+            val base = BenchResult(peerId, name, rssiStart = rssiStart, connectMs = connectMs, mtu = link.negotiatedMtu)
+            if (opened.isFailure) {
+                link.close()
+                return@withLock failed("could not connect: ${opened.exceptionOrNull()?.message}", base)
+            }
+            try {
+                val frame = (link.negotiatedMtu - 3).coerceAtMost(BENCH_FRAME_MAX)
+                val acked = benchMode(link, frame, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                val unacked = benchMode(link, frame, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                val rssiEnd = _peers.value.firstOrNull { it.id == peerId }?.rssi
+                base.copy(rssiEnd = rssiEnd, acknowledged = acked, unacknowledged = unacked).also { MeshLog.d("BENCH ${it.summary()}") }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed("${e.message}", base)
+            } finally {
+                link.close()
+            }
+        }
+    }
+
+    /** Sends [BENCH_BYTES] in frames of [frameBytes] with one write type, then asks the peer what it received. */
+    private suspend fun benchMode(link: ClientLink, frameBytes: Int, writeType: Int): BenchMode {
+        require(frameBytes >= BenchFrame.MIN_DATA) { "MTU ${link.negotiatedMtu} too small for a benchmark" }
+        val runId = Random.nextInt()
+        val frames = BENCH_BYTES / frameBytes
+        val latencies = ArrayList<Long>(frames)
+        val reply = CompletableDeferred<BenchFrame.Parsed.Reply>()
+        link.benchReply = reply
+        val started = SystemClock.elapsedRealtime()
+        try {
+            for (seq in 0 until frames) {
+                val t = SystemClock.elapsedRealtime()
+                link.write(BenchFrame.data(runId, seq, frameBytes), BENCH_WRITE_TIMEOUT_MS, writeType).getOrThrow()
+                latencies += SystemClock.elapsedRealtime() - t
+            }
+            link.write(BenchFrame.end(runId, frames), BENCH_WRITE_TIMEOUT_MS, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT).getOrThrow()
+            val r = withTimeoutOrNull(BENCH_REPLY_TIMEOUT_MS) { reply.await() }
+            val millis = SystemClock.elapsedRealtime() - started
+            return BenchMode(frames, frameBytes, millis, r?.takeIf { it.runId == runId }?.frames ?: 0, latencies)
+        } finally {
+            link.benchReply = null
         }
     }
 
@@ -781,6 +874,9 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         private val cccdWritten = CompletableDeferred<Unit>()
         private val disconnected = CompletableDeferred<Unit>()
         @Volatile private var writeDone: CompletableDeferred<Unit>? = null
+        /** A benchmark waiting for the peer's REPLY notification (see [BenchFrame]). */
+        @Volatile var benchReply: CompletableDeferred<BenchFrame.Parsed.Reply>? = null
+        val negotiatedMtu: Int get() = mtu.get()
 
         private val id = "c:$address"
 
@@ -841,6 +937,10 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         }
 
         private fun onNotification(value: ByteArray) {
+            if (BenchFrame.isBench(value)) {
+                (BenchFrame.parse(value) as? BenchFrame.Parsed.Reply)?.let { benchReply?.complete(it) }
+                return
+            }
             stats.replies.incrementAndGet()
             lastInboundAt = SystemClock.elapsedRealtime()
             touch(REPLY_IDLE_MS) // the peer may follow up on this link
@@ -901,7 +1001,10 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             }
         }
 
-        suspend fun write(payload: ByteArray, stepTimeoutMs: Long): Result<Unit> {
+        suspend fun write(payload: ByteArray, stepTimeoutMs: Long): Result<Unit> =
+            write(payload, stepTimeoutMs, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+
+        suspend fun write(payload: ByteArray, stepTimeoutMs: Long, writeType: Int): Result<Unit> {
             val g = gatt
             val r = rx
             if (!isOpen || closed || g == null || r == null) return Result.failure(IOException("link closed"))
@@ -911,7 +1014,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                     val done = CompletableDeferred<Unit>()
                     writeDone = done
                     writes.incrementAndGet()
-                    check(writeCharacteristic(g, r, payload)) { "writeCharacteristic rejected" }
+                    check(writeCharacteristic(g, r, payload, writeType)) { "writeCharacteristic rejected" }
                     awaitStep("write", stepTimeoutMs, transient = false) { done.await() }
                 }
                 Result.success(Unit)
@@ -1015,14 +1118,13 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     private fun writeCharacteristic(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
-        payload: ByteArray
+        payload: ByteArray,
+        writeType: Int = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
     ): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(
-                characteristic, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            ) == BluetoothStatusCodes.SUCCESS
+            gatt.writeCharacteristic(characteristic, payload, writeType) == BluetoothStatusCodes.SUCCESS
         } else {
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            characteristic.writeType = writeType
             characteristic.value = payload
             gatt.writeCharacteristic(characteristic)
         }

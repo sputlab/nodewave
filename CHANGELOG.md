@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+### Added
+- **Link benchmark** (BENCH tab): between two directly visible phones it opens a fresh link and measures connection time, negotiated MTU, throughput and write latency with acknowledged writes and with write-without-response (about 24 KB each, counted by the receiver, so loss shows), plus RSSI at the start and end. "repeat" runs it every 20 s so you can walk away and watch range. Results go to the `MESH_RADIO` log as `BENCH ...`. The frames (`BenchFrame`) are consumed by the transport and never reach the protocol.
+
 ## [0.6.0] - 2026-11-01
 
 Verified contacts, group chat and a radio watchdog that recovers a deaf scanner.

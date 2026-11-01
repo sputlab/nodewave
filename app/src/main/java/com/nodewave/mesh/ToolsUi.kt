@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,6 +40,7 @@ import com.nodewave.mesh.protocol.GroupCodec
 import com.nodewave.mesh.protocol.GroupState
 import com.nodewave.mesh.protocol.NodeEntry
 import com.nodewave.mesh.protocol.groupTimeline
+import com.nodewave.mesh.transport.BenchResult
 import com.nodewave.mesh.ui.theme.TacticalAmber
 import com.nodewave.mesh.ui.theme.TacticalDim
 import com.nodewave.mesh.ui.theme.TacticalGreen
@@ -223,4 +225,44 @@ private fun MemberDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL", fontFamily = Mono) } }
     )
+}
+
+/** Measures one direct link: connection time, throughput with and without write acknowledgements, RSSI. */
+@Composable
+internal fun BenchTab(
+    vm: MainViewModel,
+    nodes: List<NodeEntry>,
+    results: List<BenchResult>,
+    busy: Boolean,
+    repeatPeer: String?,
+    enabled: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Panel(title = "LINK BENCHMARK (24 KB per mode, direct nodes only)") {
+            val direct = nodes.filter { it.isDirect }
+            if (direct.isEmpty()) Text("No direct node in range.", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
+            direct.forEach { n ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(n.name, color = Color.White, fontFamily = Mono, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text("${n.rssi ?: "--"} dBm", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp)
+                    }
+                    Text("repeat", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
+                    Switch(checked = repeatPeer == n.id, onCheckedChange = { on -> vm.setBenchRepeat(if (on) n.id else null) }, enabled = enabled)
+                    OutlinedButton(onClick = { vm.runBench(n.id) }, enabled = enabled && !busy, border = BorderStroke(1.dp, TacticalGreen)) {
+                        Text(if (busy) "…" else "RUN", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+        Panel(title = "RESULTS (${results.size})", modifier = Modifier.weight(1f, fill = false)) {
+            LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(results) { r ->
+                    val time = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(r.time))
+                    Text("[$time] ${r.summary()}", color = if (r.ok) Color.White else TacticalRed, fontFamily = Mono, fontSize = 10.sp)
+                }
+            }
+        }
+    }
 }

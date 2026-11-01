@@ -103,6 +103,9 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
     val verified by vm.verifiedPeers.collectAsStateWithLifecycle()
     val groups by vm.groups.collectAsStateWithLifecycle()
     val selectedGroupId by vm.selectedGroupId.collectAsStateWithLifecycle()
+    val benchResults by vm.benchResults.collectAsStateWithLifecycle()
+    val benchBusy by vm.benchBusy.collectAsStateWithLifecycle()
+    val benchRepeatPeer by vm.benchRepeatPeer.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(0) }
 
     // API 31+ -> BLUETOOTH_SCAN/ADVERTISE/CONNECT; API 29-30 -> ACCESS_FINE_LOCATION (see BleTransport).
@@ -147,7 +150,7 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("RADIO", "CONTACTS", "GROUPS").forEachIndexed { i, label ->
+            listOf("RADIO", "CONTACTS", "GROUPS", "BENCH").forEachIndexed { i, label ->
                 OutlinedButton(
                     onClick = { tab = i }, modifier = Modifier.weight(1f),
                     border = BorderStroke(if (tab == i) 2.dp else 1.dp, if (tab == i) TacticalGreen else TacticalDim)
@@ -156,6 +159,7 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
         }
         when (tab) {
             1 -> ContactsTab(vm, nodes, verified, Modifier.weight(1f))
+            3 -> BenchTab(vm, nodes, benchResults, benchBusy, benchRepeatPeer, state == TransportState.ACTIVE, Modifier.weight(1f))
             2 -> GroupsTab(vm, groups, nodes, allMessages, selectedGroupId, state == TransportState.ACTIVE, Modifier.weight(1f))
             else -> {
             Panel(title = "NODES (${nodes.size})", modifier = Modifier.weight(1.4f)) {

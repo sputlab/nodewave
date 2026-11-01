@@ -10,6 +10,7 @@ import com.nodewave.mesh.data.SqliteMessageStore
 import com.nodewave.mesh.data.SqlitePeerKeyStore
 import com.nodewave.mesh.protocol.MeshMessenger
 import com.nodewave.mesh.transport.BleTransport
+import com.nodewave.mesh.transport.LinkBenchmark
 import com.nodewave.mesh.transport.MeshLog
 import com.nodewave.mesh.transport.MeshTransport
 import kotlinx.coroutines.CoroutineScope
@@ -28,7 +29,9 @@ class MeshEngine(app: Application) {
     val identity = IdentityProvider.getOrCreate(PrefsIdentityStore(app, cipher))
     val localNodeName: String = Build.MODEL
 
-    val transport: MeshTransport = BleTransport(app, identity.nodeId)
+    private val ble = BleTransport(app, identity.nodeId)
+    val transport: MeshTransport = ble
+    val benchmark: LinkBenchmark = ble
 
     private val db = NodeWaveDb(app)
     val messenger = MeshMessenger(
