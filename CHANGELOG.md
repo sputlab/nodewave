@@ -40,11 +40,14 @@ Background operation, persistent history and end-to-end encryption.
 - v0.4.0 is **not wire-compatible** with earlier versions (protocol version 3, encrypted payloads). Update every device.
 - **Node IDs change** on first launch (they are now derived from a freshly generated key). Nothing was persisted before, so there is no history to migrate.
 
-### Verified on devices
-- Foreground service: radio active, notification with *Stop radio* action, keys and history surviving an app reinstall, encrypted ping with authenticated ACK between Mi Note 10 and Honor View 10.
-- Screen off: the **Mi Note 10** (MIUI) received a ping, sent its ACK and the sender marked it `DELIVERED`.
-- Screen off on the **Honor View 10 (EMUI 10)**: **not working** with default settings. EMUI moves the process into a freezer cgroup when the screen turns off (no log output at all, peers get `Timeout during write`), neither the foreground service, the wake lock nor the Doze whitelist prevent it. The user must set *App launch > Manage manually* for NodeWave (see README); this has not been re-tested yet.
-- Not tested: real Doze (phones were charging on USB), the Sony XQ-AS52 (not connected during these tests), three-node relay with encryption on hardware.
+### Verified on devices (Mi Note 10, Honor View 10, Sony XQ-AS52)
+- Foreground service with notification and *Stop radio* action; keys and history survive an app reinstall.
+- Key exchange from scratch (Mi Note 10 <-> Sony) followed by an encrypted ping and an authenticated ACK: `DELIVERED`.
+- **Encrypted relay**: Mi -> Honor -> Sony with the debug switch on both ends; the Sony received it with `relays=1` and the ACK came back through the Honor (`DELIVERED (relays=1)`).
+- **Screen off**: all three phones received a ping and sent their ACK. The Honor stayed reachable for more than 8 minutes with the screen off, once *App launch > Manage manually* is set for NodeWave.
+- Honor with default EMUI settings is **not** reachable with the screen off: EMUI moves the process into a freezer cgroup (no log output, peers get `Timeout during write`), and neither the foreground service, the wake lock nor the Doze whitelist prevent it. The README explains the setting.
+- Observed: transient GATT errors (`133`, `62`, `19`) between phones are retried automatically; a delivery can take 3 to 11 seconds when they happen.
+- Not tested: real Doze (the phones were charging on USB).
 
 ### Known limitations
 - Phone makers' battery managers can freeze the app despite the foreground service (see README).
