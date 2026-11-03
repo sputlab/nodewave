@@ -77,6 +77,15 @@ rotation of the pairwise sessions apply unchanged. Rules, all enforced by the re
   out of the admin's new list deletes the group;
 - a **leave** notice removes its (authenticated) sender from the list.
 
+## Positions
+
+A node can send its position to nobody, to the contacts it verified, or to every node in range. The position
+(`lat, lon, accuracy, time`, 14 bytes) travels as a sealed `POSITION` packet, one copy per recipient over the
+pairwise session, so a relay cannot read it. Receivers keep only the newest position per node. Limits: whoever
+receives a position can keep it and pass it on; with "everyone" any node in range, including a hostile one, gets
+it; the time comes from the sender's clock and is not checked; positions are stored on the receiving phone in
+clear in the app database (not in the encrypted message table).
+
 ## Known limitations
 
 - **Forward secrecy is best effort on the device.** Keys are zeroed when sessions end, but the JVM may leave

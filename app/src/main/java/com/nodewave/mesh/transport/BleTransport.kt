@@ -74,7 +74,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Permissions are verified in [hasRequiredPermissions] before any radio call, hence the lint suppression.
  */
 @SuppressLint("MissingPermission")
-class BleTransport(context: Context, private val localNodeId: String) : MeshTransport, LinkBenchmark {
+class BleTransport(context: Context, private val localNodeId: String) : MeshTransport, LinkBenchmark, RadioControl {
 
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("6e0d7a10-4e57-4c0e-9b1f-6d6573680001")
@@ -176,6 +176,17 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     /** Last time anything arrived over a link (a write to our server or a notification), as a sign the radio works. */
     @Volatile private var lastInboundAt = 0L
     @Volatile private var advertisedName = ""
+
+    @Volatile override var radioSettings: RadioSettings = RadioSettings()
+
+    override suspend fun applyRadioSettings() {
+        lifecycleMutex.withLock {
+            if (_state.value == TransportState.ACTIVE) {
+                MeshLog.d("Radio settings changed: $radioSettings, reopening the radio")
+                runCatching { reopenRadio() }.onFailure { MeshLog.e("Radio restart failed", it) }
+            }
+        }
+    }
     @Volatile private var advertiseCallback: AdvertiseCallback? = null
     private var scanJob: Job? = null
     private var pruneJob: Job? = null
@@ -406,8 +417,21 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             }
         }
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setAdvertiseMode(
+                when (radioSettings.advertise) {
+                    AdvertiseProfile.LOW_POWER -> AdvertiseSettings.ADVERTISE_MODE_LOW_POWER
+                    AdvertiseProfile.BALANCED -> AdvertiseSettings.ADVERTISE_MODE_BALANCED
+                    AdvertiseProfile.LOW_LATENCY -> AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY
+                }
+            )
+            .setTxPowerLevel(
+                when (radioSettings.power) {
+                    AdvertisePower.ULTRA_LOW -> AdvertiseSettings.ADVERTISE_TX_POWER_ULTRA_LOW
+                    AdvertisePower.LOW -> AdvertiseSettings.ADVERTISE_TX_POWER_LOW
+                    AdvertisePower.MEDIUM -> AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM
+                    AdvertisePower.HIGH -> AdvertiseSettings.ADVERTISE_TX_POWER_HIGH
+                }
+            )
             .setConnectable(true)
             .setTimeout(0)
             .build()
@@ -452,7 +476,13 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     private fun startScanJob(adapter: BluetoothAdapter) {
         val scanner = adapter.bluetoothLeScanner ?: throw IllegalStateException("BLE scanner unavailable")
         val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build())
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build()
+        val settings = ScanSettings.Builder().setScanMode(
+            when (radioSettings.scan) {
+                ScanProfile.LOW_POWER -> ScanSettings.SCAN_MODE_LOW_POWER
+                ScanProfile.BALANCED -> ScanSettings.SCAN_MODE_BALANCED
+                ScanProfile.LOW_LATENCY -> ScanSettings.SCAN_MODE_LOW_LATENCY
+            }
+        ).build()
         scanJob = scope.launch {
             scanFlow(scanner, filters, settings)
                 .catch { MeshLog.e("Scan flow terminated", it) }

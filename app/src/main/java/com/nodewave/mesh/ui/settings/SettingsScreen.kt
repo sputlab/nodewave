@@ -1,0 +1,236 @@
+package com.nodewave.mesh.ui.settings
+
+import android.Manifest
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nodewave.mesh.MainViewModel
+import com.nodewave.mesh.data.LoraMode
+import com.nodewave.mesh.data.LoraSettings
+import com.nodewave.mesh.protocol.GeoPosition
+import com.nodewave.mesh.protocol.PositionSharing
+import com.nodewave.mesh.transport.AdvertisePower
+import com.nodewave.mesh.transport.AdvertiseProfile
+import com.nodewave.mesh.transport.ScanProfile
+import com.nodewave.mesh.ui.components.Chip
+import com.nodewave.mesh.ui.components.SectionLabel
+import com.nodewave.mesh.ui.components.Segmented
+import com.nodewave.mesh.ui.components.TacButton
+import com.nodewave.mesh.ui.components.TacKind
+import com.nodewave.mesh.ui.components.TacPanel
+import com.nodewave.mesh.ui.components.TacTextField
+import com.nodewave.mesh.ui.components.ToggleRow
+import com.nodewave.mesh.ui.components.groupedId
+import com.nodewave.mesh.ui.map.mapDir
+import com.nodewave.mesh.ui.theme.Mono
+import com.nodewave.mesh.ui.theme.Sans
+import com.nodewave.mesh.ui.theme.TacticalAmber
+import com.nodewave.mesh.ui.theme.TacticalDim
+import com.nodewave.mesh.ui.theme.TacticalGreen
+import com.nodewave.mesh.ui.theme.TacticalRed
+import com.nodewave.mesh.ui.theme.TacticalSurface
+import com.nodewave.mesh.ui.theme.TacticalText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+
+@Composable
+fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
+    val s by vm.settings.collectAsStateWithLifecycle()
+    val own by vm.ownPosition.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var usb by remember { mutableStateOf(vm.usbDevices()) }
+    var confirmClear by remember { mutableStateOf(false) }
+    var mapNote by remember { mutableStateOf<String?>(null) }
+    var hasLocation by remember { mutableStateOf(vm.hasLocationPermission()) }
+
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hasLocation = it; if (it) vm.startPositionTracking() }
+    val importMap = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            mapNote = "Importing…"
+            val name = runCatching {
+                withContext(Dispatchers.IO) {
+                    val resolver = context.contentResolver
+                    val display = resolver.query(uri, null, null, null, null)?.use { c ->
+                        if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null
+                    } ?: "map.mbtiles"
+                    val safe = display.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                    resolver.openInputStream(uri)!!.use { input -> File(mapDir(context), safe).outputStream().use { input.copyTo(it) } }
+                    safe
+                }
+            }
+            name.onSuccess { n -> vm.updateSettings { it.copy(mapArchive = n) }; mapNote = "Imported $n" }
+                .onFailure { mapNote = "Import failed: ${it.message}" }
+        }
+    }
+
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item {
+            TacPanel(title = "Identity") {
+                Text(vm.localNodeName, color = TacticalText, fontFamily = Sans, fontSize = 16.sp)
+                Text(groupedId(vm.localNodeId), color = TacticalDim, fontFamily = Mono, fontSize = 11.sp)
+                Text("The node name is the phone's model. Your ID comes from a key that never leaves the phone.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+            }
+        }
+        item {
+            TacPanel(title = "Bluetooth radio") {
+                SectionLabel("Scan")
+                Segmented(listOf(ScanProfile.LOW_POWER to "Save", ScanProfile.BALANCED to "Balanced", ScanProfile.LOW_LATENCY to "Fast"), s.radio.scan, { v -> vm.updateSettings { it.copy(radio = it.radio.copy(scan = v)) } })
+                SectionLabel("Announce")
+                Segmented(listOf(AdvertiseProfile.LOW_POWER to "Save", AdvertiseProfile.BALANCED to "Balanced", AdvertiseProfile.LOW_LATENCY to "Fast"), s.radio.advertise, { v -> vm.updateSettings { it.copy(radio = it.radio.copy(advertise = v)) } })
+                SectionLabel("Announce power")
+                Segmented(listOf(AdvertisePower.ULTRA_LOW to "Min", AdvertisePower.LOW to "Low", AdvertisePower.MEDIUM to "Mid", AdvertisePower.HIGH to "Max"), s.radio.power, { v -> vm.updateSettings { it.copy(radio = it.radio.copy(power = v)) } })
+                Text("Faster scanning and a higher power find nodes sooner and from further away but use more battery. A change restarts the radio. Connections use the phone's own power level.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+            }
+        }
+        item { LoraPanel(vm, s.lora, usb) { usb = vm.usbDevices() } }
+        item {
+            TacPanel(title = "Position") {
+                Text("Who can see where you are", color = TacticalText, fontFamily = Sans, fontSize = 14.sp)
+                Segmented(listOf(PositionSharing.OFF to "Nobody", PositionSharing.VERIFIED to "Verified", PositionSharing.EVERYONE to "Everyone"), s.positionSharing, { v ->
+                    vm.updateSettings { it.copy(positionSharing = v) }
+                    if (v != PositionSharing.OFF && !hasLocation && !s.useFixedPosition) locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                })
+                Text(
+                    when (s.positionSharing) {
+                        PositionSharing.OFF -> "Your position is never sent."
+                        PositionSharing.VERIFIED -> "Only nodes whose code you scanned receive it."
+                        PositionSharing.EVERYONE -> "Every node in reach receives it, encrypted for that node."
+                    } + " The GPS runs only while the app is open.",
+                    color = TacticalDim, fontFamily = Sans, fontSize = 12.sp
+                )
+                if (s.positionSharing != PositionSharing.OFF && !hasLocation) TacButton("Allow location", { locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION) }, kind = TacKind.AMBER, small = true)
+                FixedPosition(s.useFixedPosition, s.fixedPosition, own, onChange = { use, p -> vm.updateSettings { it.copy(useFixedPosition = use, fixedPosition = p) } })
+            }
+        }
+        item {
+            TacPanel(title = "Map") {
+                Text(
+                    if (s.mapArchive != null) "Offline map file: ${s.mapArchive}" else "No offline map file imported.",
+                    color = TacticalText, fontFamily = Sans, fontSize = 13.sp
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TacButton("Import map file", { importMap.launch(arrayOf("*/*")) }, small = true)
+                    if (s.mapArchive != null) TacButton("Remove", { vm.updateSettings { it.copy(mapArchive = null) }; mapNote = "Map file removed from use" }, kind = TacKind.DANGER, small = true)
+                }
+                mapNote?.let { Text(it, color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
+                TacTextField(s.tileUrl, { v -> vm.updateSettings { it.copy(tileUrl = v.trim()) } }, Modifier.fillMaxWidth(), label = "Tile server URL (optional)", placeholder = "https://host/{z}/{x}/{y}.png", mono = true)
+                Text("Used only when you press Download area on the map, and for tiles not yet saved. Pick a server whose rules allow it: the public OpenStreetMap servers forbid bulk download. This is the only thing in the app that uses the internet.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                TacButton("Clear downloaded tiles", {
+                    scope.launch { withContext(Dispatchers.IO) { File(mapDir(context), "tiles").deleteRecursively() }; mapNote = "Tile cache cleared" }
+                }, kind = TacKind.DANGER, small = true)
+            }
+        }
+        item {
+            TacPanel(title = "Data") {
+                Text("Chats are stored encrypted on this phone.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                TacButton("Clear all chat history", { confirmClear = true }, kind = TacKind.DANGER, small = true)
+            }
+        }
+        item {
+            TacPanel(title = "Diagnostics") {
+                Text("The raw radio console, link benchmark and the first test tools.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                TacButton("Open diagnostics", onDiagnostics, small = true)
+            }
+        }
+        item {
+            TacPanel(title = "About") {
+                Text("NodeWave ${vm.appVersion()}", color = TacticalText, fontFamily = Mono, fontSize = 14.sp)
+                Text("Off-grid mesh walkie-talkie over Bluetooth LE. Open source, GPL-3.0. No accounts, no servers, no tracking.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                Text("github.com/sputlab/nodewave", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
+            }
+        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false }, containerColor = TacticalSurface,
+            title = { Text("Clear chat history?", fontFamily = Mono, color = TacticalText) },
+            text = { Text("All messages on this phone are deleted. Nodes, groups and verified contacts stay.", color = TacticalDim, fontFamily = Sans) },
+            confirmButton = { TacButton("Clear", { vm.clearHistory(); confirmClear = false }, kind = TacKind.DANGER, small = true) },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("CANCEL", fontFamily = Mono, color = TacticalDim) } }
+        )
+    }
+}
+
+@Composable
+private fun FixedPosition(use: Boolean, fixed: GeoPosition?, own: GeoPosition?, onChange: (Boolean, GeoPosition?) -> Unit) {
+    var lat by remember(fixed) { mutableStateOf(fixed?.lat?.let { "%.6f".format(java.util.Locale.US, it) } ?: "") }
+    var lon by remember(fixed) { mutableStateOf(fixed?.lon?.let { "%.6f".format(java.util.Locale.US, it) } ?: "") }
+    var error by remember { mutableStateOf<String?>(null) }
+    ToggleRow("Fixed station", "Share these coordinates every minute instead of the GPS, screen on or off. For a base or a repeater that does not move.", use, { on ->
+        if (!on) onChange(false, fixed) else save(lat, lon) { p, e -> error = e; if (p != null) onChange(true, p) }
+    })
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TacTextField(lat, { lat = it }, Modifier.weight(1f), label = "Latitude", keyboardType = KeyboardType.Decimal, mono = true)
+        TacTextField(lon, { lon = it }, Modifier.weight(1f), label = "Longitude", keyboardType = KeyboardType.Decimal, mono = true)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TacButton("Use current", { own?.let { lat = "%.6f".format(java.util.Locale.US, it.lat); lon = "%.6f".format(java.util.Locale.US, it.lon) } }, enabled = own != null, small = true)
+        TacButton("Save", { save(lat, lon) { p, e -> error = e; if (p != null) onChange(use, p) } }, kind = TacKind.PRIMARY, small = true)
+    }
+    error?.let { Text(it, color = TacticalRed, fontFamily = Mono, fontSize = 11.sp) }
+}
+
+private fun save(lat: String, lon: String, done: (GeoPosition?, String?) -> Unit) {
+    val la = lat.replace(',', '.').toDoubleOrNull(); val lo = lon.replace(',', '.').toDoubleOrNull()
+    if (la == null || lo == null || la !in -90.0..90.0 || lo !in -180.0..180.0) done(null, "Enter valid coordinates in decimal degrees")
+    else done(GeoPosition.of(la, lo, 0f, System.currentTimeMillis()), null)
+}
+
+@Composable
+private fun LoraPanel(vm: MainViewModel, lora: LoraSettings, usb: List<Triple<String, String, Boolean>>, onRefresh: () -> Unit) {
+    TacPanel(title = "LoRa boards", actions = { Chip(if (usb.isEmpty()) "no board" else "${usb.size} usb", if (usb.isEmpty()) TacticalDim else TacticalGreen) }) {
+        Text("Long-range boards (E22-900T22U, ESP32 LoRa) will connect through a USB OTG cable; Bluetooth boards later. These settings are saved now and applied when a board is connected.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+        if (usb.isEmpty()) Text("No USB device attached.", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp)
+        usb.forEach { (name, ids, granted) ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(name, color = TacticalText, fontFamily = Sans, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Text("$ids${if (granted) "" else " · no access"}", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
+            }
+        }
+        TacButton("Scan USB", onRefresh, small = true)
+        SectionLabel("Transmit power")
+        Segmented(LoraSettings.POWERS.map { it to "$it dBm" }, lora.powerDbm, { v -> vm.updateSettings { it.copy(lora = it.lora.copy(powerDbm = v)) } })
+        SectionLabel("Air data rate (kbps)")
+        Segmented(LoraSettings.AIR_RATES.take(4).map { it to "$it" }, lora.airRateKbps, { v -> vm.updateSettings { it.copy(lora = it.lora.copy(airRateKbps = v)) } })
+        Segmented(LoraSettings.AIR_RATES.drop(4).map { it to "$it" }, lora.airRateKbps, { v -> vm.updateSettings { it.copy(lora = it.lora.copy(airRateKbps = v)) } })
+        Text("Slower rates reach further and take longer on air.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+        SectionLabel("Channel · %.3f MHz".format(java.util.Locale.US, 850.125 + lora.channel))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            TacButton("−", { vm.updateSettings { it.copy(lora = it.lora.copy(channel = (it.lora.channel - 1).coerceAtLeast(0))) } }, small = true)
+            Text("CH ${lora.channel}", color = TacticalText, fontFamily = Mono, fontSize = 14.sp)
+            TacButton("+", { vm.updateSettings { it.copy(lora = it.lora.copy(channel = (it.lora.channel + 1).coerceAtMost(LoraSettings.CHANNELS - 1))) } }, small = true)
+        }
+        SectionLabel("Mode")
+        Segmented(listOf(LoraMode.TRANSPARENT to "Transparent", LoraMode.FIXED to "Fixed", LoraMode.WOR to "WOR"), lora.mode, { v -> vm.updateSettings { it.copy(lora = it.lora.copy(mode = v)) } })
+        SectionLabel("Packet size (bytes)")
+        Segmented(LoraSettings.PACKET_SIZES.map { it to "$it" }, lora.packetBytes, { v -> vm.updateSettings { it.copy(lora = it.lora.copy(packetBytes = v)) } })
+    }
+}

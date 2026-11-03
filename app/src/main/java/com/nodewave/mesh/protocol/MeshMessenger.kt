@@ -8,6 +8,9 @@ import com.nodewave.mesh.crypto.SessionManager
 import com.nodewave.mesh.data.GroupStore
 import com.nodewave.mesh.data.MessageStore
 import com.nodewave.mesh.data.NoGroupStore
+import com.nodewave.mesh.data.NodeStore
+import com.nodewave.mesh.data.NoNodeStore
+import com.nodewave.mesh.data.StoredNode
 import com.nodewave.mesh.data.PeerKeyStore
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshLog
@@ -66,7 +69,8 @@ class MeshMessenger(
     private val cryptoDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val clock: () -> Long = System::currentTimeMillis,
     private val sessions: SessionManager = SessionManager(identity, clock),
-    private val groupStore: GroupStore = NoGroupStore
+    private val groupStore: GroupStore = NoGroupStore,
+    private val nodeStore: NodeStore = NoNodeStore
 ) {
     companion object {
         const val PING_TEXT = "CIAO - 73"
@@ -74,6 +78,10 @@ class MeshMessenger(
         const val MAX_TEXT_BYTES = 180
         private const val MAX_HISTORY = 500
         private const val MAX_PENDING_INVITES = 8
+        private const val MAX_ACTIVITY = 200
+        private const val ALIAS_MAX = 32
+        private const val SIGHTING_INTERVAL_MS = 60_000L
+        private const val POSITION_MIN_INTERVAL_MS = 20_000L
         private const val MAX_SEEN = 1024
         /**
          * A relay forwards a given packet at most once per this window, which stops floods echoing around a loop.
@@ -185,6 +193,7 @@ class MeshMessenger(
             transport.incomingPayloads.collect { handleIncoming(it) }
         }
         scope.launch { helloLoop() }
+        scope.launch { trackSightings() }
         // Forward secrecy housekeeping: stopping the radio ends every session and wipes its keys.
         scope.launch {
             transport.state.collect {
@@ -220,6 +229,10 @@ class MeshMessenger(
     // ---------------------------------------------------------------- persistence
 
     private suspend fun restoreState() {
+        runCatching { nodeStore.all() }.onSuccess { stored ->
+            _stored.update { live -> stored.associateBy { it.id } + live }
+            _positions.update { live -> stored.mapNotNull { n -> n.position?.let { n.id to it } }.toMap() + live }
+        }.onFailure { MeshLog.e("Could not load known nodes", it) }
         runCatching { groupStore.loadAll() }.onSuccess { stored ->
             _groups.update { live -> stored.filter { s -> live.none { it.id == s.id } } + live }
         }.onFailure { MeshLog.e("Could not load groups", it) }
@@ -321,6 +334,8 @@ class MeshMessenger(
                 noteLink(packet, linkId)
                 refreshSecurePeers()
                 MeshLog.d("Session ${outcome.session.sid.toUInt().toString(16)} established with $who")
+                count { it.copy(handshakes = it.handshakes + 1) }
+                note(ActivityEvent.Kind.SECURITY, "Encrypted session with ${nameOf(packet.senderId)}", packet.senderId)
                 sessionWaiters.remove(packet.senderId)?.complete(outcome.session)
                 helloPending.add(packet.senderId)
             }
@@ -363,6 +378,7 @@ class MeshMessenger(
             groupId = groupId, groupSendId = groupSendId
         )
         append(message)
+        count { it.copy(sent = it.sent + 1) }
         scope.launch {
             var attempt = 0
             while (true) {
@@ -483,6 +499,7 @@ class MeshMessenger(
             PacketType.ACK -> onAck(packet, linkId)
             PacketType.MESSAGE, PacketType.PING -> onMessage(packet, linkId)
             PacketType.GROUP -> onGroup(packet, linkId)
+            PacketType.POSITION -> onPosition(packet, linkId)
         }
     }
 
@@ -537,6 +554,8 @@ class MeshMessenger(
         if (markSeen(packet)) {
             val text = plain.toString(Charsets.UTF_8)
             MeshLog.d("RECEIVED '$text' from ${nameOf(packet.senderId)} [${packet.senderId.take(6)}] relays=${packet.hops}")
+            count { it.copy(received = it.received + 1) }
+            note(ActivityEvent.Kind.MESSAGE, "${if (packet.type == PacketType.PING) "Ping" else "Message"} from ${nameOf(packet.senderId)}" + (if (packet.hops > 0) " via ${packet.hops} relay(s)" else ""), packet.senderId)
             append(
                 ChatMessage(
                     messageId = packet.messageId, peerId = packet.senderId,
@@ -549,6 +568,138 @@ class MeshMessenger(
             MeshLog.d("Duplicate ${packet.uid.take(8)} from ${packet.senderId.take(6)}, re-ACK only")
         }
         scope.launch { sendAck(packet) }
+    }
+
+    // ---------------------------------------------------------------- directory, positions, activity
+
+    private val _stored = MutableStateFlow<Map<String, StoredNode>>(emptyMap())
+    private val _positions = MutableStateFlow<Map<String, GeoPosition>>(emptyMap())
+    /** Last known position per node (ours is not in it). */
+    val positions: StateFlow<Map<String, GeoPosition>> = _positions.asStateFlow()
+
+    private val _activity = MutableStateFlow<List<ActivityEvent>>(emptyList())
+    /** Newest first, at most [MAX_ACTIVITY]. */
+    val activity: StateFlow<List<ActivityEvent>> = _activity.asStateFlow()
+    private val _stats = MutableStateFlow(MeshStats())
+    val stats: StateFlow<MeshStats> = _stats.asStateFlow()
+
+    private val _sharing = MutableStateFlow(PositionSharing.OFF)
+    val positionSharing: StateFlow<PositionSharing> = _sharing.asStateFlow()
+    private val lastPositionSent = HashMap<String, Long>()
+    private val lastNoted = HashMap<String, Long>()
+
+    /** Every node we know of, in range or not, best first: favourites, then those in range, then the most recently seen. */
+    val knownNodes: StateFlow<List<KnownNode>> = combine(
+        _stored, nodes, _verifiedPeers, _keyedPeers, _positions
+    ) { stored, live, verified, keyed, positions ->
+        val ids = stored.keys + live.map { it.id } + verified
+        ids.map { id ->
+            val st = stored[id]
+            val l = live.firstOrNull { it.id == id }
+            KnownNode(
+                id = id,
+                name = st?.alias ?: l?.name ?: st?.name ?: id.take(6),
+                advertisedName = l?.name ?: st?.name ?: id.take(6),
+                alias = st?.alias, favorite = st?.favorite ?: false,
+                verified = id in verified, secure = id in keyed,
+                visible = l != null, direct = l?.isDirect ?: false, rssi = l?.rssi, viaName = l?.viaName,
+                firstSeen = st?.firstSeen ?: 0L, lastSeen = if (l != null) clock() else st?.lastSeen ?: 0L,
+                position = positions[id] ?: st?.position
+            )
+        }.sortedWith(compareByDescending<KnownNode> { it.favorite }.thenByDescending { it.visible }.thenByDescending { it.lastSeen })
+    }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    private fun note(kind: ActivityEvent.Kind, text: String, nodeId: String? = null) {
+        _activity.update { (listOf(ActivityEvent(clock(), kind, text, nodeId)) + it).take(MAX_ACTIVITY) }
+    }
+
+    private fun count(change: (MeshStats) -> MeshStats) = _stats.update(change)
+
+    /** Starts the sightings bookkeeping: remembers every node we see and logs arrivals and departures. */
+    private suspend fun trackSightings() {
+        var previous = emptySet<String>()
+        nodes.collect { list ->
+            val now = clock()
+            val ids = list.map { it.id }.toSet()
+            for (n in list) {
+                if (n.id !in previous) note(ActivityEvent.Kind.NODE, "${displayName(n.id, n.name)} is in range" + (n.viaName?.let { " via $it" } ?: ""), n.id)
+                if (now - (lastNoted[n.id] ?: Long.MIN_VALUE / 2) >= SIGHTING_INTERVAL_MS) {
+                    lastNoted[n.id] = now
+                    _stored.update { m ->
+                        val old = m[n.id]
+                        m + (n.id to (old?.copy(name = n.name, lastSeen = now) ?: StoredNode(n.id, n.name, null, false, now, now, null, 0)))
+                    }
+                    runCatching { nodeStore.noteSeen(n.id, n.name, now) }
+                }
+            }
+            for (gone in previous - ids) note(ActivityEvent.Kind.NODE, "${displayName(gone, null)} left range", gone)
+            previous = ids
+        }
+    }
+
+    private fun displayName(id: String, advertised: String?): String =
+        _stored.value[id]?.alias ?: advertised ?: _stored.value[id]?.name ?: id.take(6)
+
+    fun setAlias(nodeId: String, alias: String?) {
+        val clean = alias?.filter { !it.isISOControl() }?.trim()?.take(ALIAS_MAX)?.takeIf { it.isNotEmpty() }
+        _stored.update { m -> m + (nodeId to (m[nodeId]?.copy(alias = clean) ?: StoredNode(nodeId, nodeId.take(6), clean, false, clock(), clock(), null, 0))) }
+        scope.launch { runCatching { nodeStore.setAlias(nodeId, clean) } }
+    }
+
+    fun setFavorite(nodeId: String, favorite: Boolean) {
+        _stored.update { m -> m + (nodeId to (m[nodeId]?.copy(favorite = favorite) ?: StoredNode(nodeId, nodeId.take(6), null, favorite, clock(), clock(), null, 0))) }
+        scope.launch { runCatching { nodeStore.setFavorite(nodeId, favorite) } }
+    }
+
+    /** Forgets a node: its label, position, stored key and verified mark. A live session, if any, ends by itself. */
+    fun forgetNode(nodeId: String) {
+        _stored.update { it - nodeId }
+        _positions.update { it - nodeId }
+        _verifiedPeers.update { it - nodeId }
+        sessions.unpin(nodeId)
+        scope.launch {
+            runCatching { nodeStore.forget(nodeId) }
+            runCatching { peerKeys.forget(nodeId) }
+        }
+    }
+
+    // ---- positions
+
+    /** Chooses who receives our position from now on. */
+    fun setPositionSharing(mode: PositionSharing) {
+        _sharing.value = mode
+        MeshLog.d("Position sharing: $mode")
+    }
+
+    /**
+     * Offers our current [position] to the nodes in range that the sharing mode allows. Best effort: one sealed
+     * copy per recipient, no resend, and a recipient gets at most one per [POSITION_MIN_INTERVAL_MS].
+     */
+    fun publishPosition(position: GeoPosition) {
+        val mode = _sharing.value
+        if (mode == PositionSharing.OFF) return
+        val now = clock()
+        val recipients = nodes.value.map { it.id }.filter { mode == PositionSharing.EVERYONE || it in _verifiedPeers.value }
+        for (id in recipients) {
+            if (now - (lastPositionSent[id] ?: Long.MIN_VALUE / 2) < POSITION_MIN_INTERVAL_MS) continue
+            lastPositionSent[id] = now
+            scope.launch { sealAndDispatch(id, PacketType.POSITION, position.encode(), random.nextInt()) }
+        }
+    }
+
+    private fun onPosition(packet: Packet, linkId: String) {
+        val (_, plain) = open(packet) ?: return
+        noteLink(packet, linkId)
+        if (!markSeen(packet)) return
+        val position = GeoPosition.decode(plain) ?: run {
+            MeshLog.e("POSITION from ${nameOf(packet.senderId)} dropped: malformed")
+            return
+        }
+        val current = _positions.value[packet.senderId] ?: _stored.value[packet.senderId]?.position
+        if (current != null && position.timeSec <= current.timeSec) return // older or repeated
+        _positions.update { it + (packet.senderId to position) }
+        note(ActivityEvent.Kind.POSITION, "${nameOf(packet.senderId)} shared a position", packet.senderId)
+        scope.launch { runCatching { nodeStore.savePosition(packet.senderId, position) } }
     }
 
     // ---------------------------------------------------------------- groups
@@ -647,6 +798,8 @@ class MeshMessenger(
                     return
                 }
                 MeshLog.d("RECEIVED group '${group.name}' message from ${nameOf(sender)} relays=${packet.hops}")
+                count { it.copy(received = it.received + 1) }
+                note(ActivityEvent.Kind.GROUP, "${nameOf(sender)} wrote in ${group.name}", sender)
                 append(
                     ChatMessage(
                         messageId = packet.messageId, peerId = sender, peerName = nameOf(sender), outgoing = false,
@@ -667,6 +820,7 @@ class MeshMessenger(
                         return
                     }
                     MeshLog.d("Invited to group '${decoded.name}' by ${nameOf(sender)}")
+                    note(ActivityEvent.Kind.GROUP, "${nameOf(sender)} invited you to ${decoded.name}", sender)
                     putGroup(Group(decoded.groupId, decoded.name, sender, decoded.members, GroupState.INVITED))
                 } else if (sender == group.adminId) {
                     putGroup(group.copy(name = decoded.name, members = decoded.members))
@@ -699,6 +853,8 @@ class MeshMessenger(
         relayed.remove(packet.uid) // re-insert so the oldest entries are the ones to go
         relayed[packet.uid] = now
         if (relayed.size > MAX_SEEN) relayed.remove(relayed.keys.first())
+        count { it.copy(relayed = it.relayed + 1) }
+        note(ActivityEvent.Kind.RELAY, "Relayed ${packet.type.name.lowercase()} ${nameOf(packet.senderId)} -> ${nameOf(packet.destId)}", packet.senderId)
         scope.launch { dispatch(packet.forwarded(), originId = packet.senderId) }
     }
 
@@ -809,7 +965,8 @@ class MeshMessenger(
     // ---------------------------------------------------------------- state helpers
 
     private fun nameOf(nodeId: String): String =
-        nodes.value.firstOrNull { it.id == nodeId }?.name
+        _stored.value[nodeId]?.alias
+            ?: nodes.value.firstOrNull { it.id == nodeId }?.name
             ?: transport.discoveredPeers.value.firstOrNull { it.id == nodeId }?.displayName
             ?: _messages.value.lastOrNull { it.peerId == nodeId }?.peerName
             ?: nodeId.take(6)
@@ -829,6 +986,13 @@ class MeshMessenger(
                 } else it
             }
         }
-        changed?.let(::persist)
+        changed?.let {
+            persist(it)
+            when (status) {
+                MessageStatus.DELIVERED -> count { s -> s.copy(delivered = s.delivered + 1) }
+                MessageStatus.FAILED -> count { s -> s.copy(failed = s.failed + 1) }
+                else -> Unit
+            }
+        }
     }
 }

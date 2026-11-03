@@ -3,6 +3,8 @@ package com.nodewave.mesh.protocol
 import com.nodewave.mesh.crypto.LocalIdentity
 import com.nodewave.mesh.data.MessageStore
 import com.nodewave.mesh.data.GroupStore
+import com.nodewave.mesh.data.NodeStore
+import com.nodewave.mesh.data.StoredNode
 import com.nodewave.mesh.data.PeerKeyStore
 import com.nodewave.mesh.transport.IncomingPayload
 import com.nodewave.mesh.transport.MeshTransport
@@ -138,6 +140,19 @@ internal class InMemoryGroupStore : GroupStore {
     override suspend fun delete(groupId: String) { groups.remove(groupId) }
 }
 
+internal class InMemoryNodeStore : NodeStore {
+    val nodes = LinkedHashMap<String, StoredNode>()
+    override suspend fun all() = nodes.values.toList()
+    override suspend fun noteSeen(id: String, name: String, time: Long) {
+        nodes[id] = nodes[id]?.copy(name = name, lastSeen = time) ?: StoredNode(id, name, null, false, time, time, null, 0)
+    }
+    private fun get(id: String) = nodes[id] ?: StoredNode(id, id.take(6), null, false, 0, 0, null, 0)
+    override suspend fun setAlias(id: String, alias: String?) { nodes[id] = get(id).copy(alias = alias) }
+    override suspend fun setFavorite(id: String, favorite: Boolean) { nodes[id] = get(id).copy(favorite = favorite) }
+    override suspend fun savePosition(id: String, position: GeoPosition) { nodes[id] = get(id).copy(position = position, positionTime = position.timeSec) }
+    override suspend fun forget(id: String) { nodes.remove(id) }
+}
+
 internal class InMemoryPeerKeyStore : PeerKeyStore {
     val keys = LinkedHashMap<String, ByteArray>()
     val verified = LinkedHashMap<String, ByteArray>()
@@ -148,6 +163,7 @@ internal class InMemoryPeerKeyStore : PeerKeyStore {
         keys[nodeId] = publicKey; verified[nodeId] = publicKey
     }
     override suspend fun verifiedKeys(): Map<String, ByteArray> = verified.toMap()
+    override suspend fun forget(nodeId: String) { keys.remove(nodeId); verified.remove(nodeId) }
 }
 
 internal class TestNode(
@@ -156,7 +172,8 @@ internal class TestNode(
     val transport: FakeNetwork.FakeTransport,
     val store: InMemoryMessageStore,
     val keys: InMemoryPeerKeyStore,
-    val groupStore: InMemoryGroupStore = InMemoryGroupStore()
+    val groupStore: InMemoryGroupStore = InMemoryGroupStore(),
+    val nodeStore: InMemoryNodeStore = InMemoryNodeStore()
 ) {
     val id: String get() = identity.nodeId
     fun received() = messenger.messages.value.filter { !it.outgoing }
@@ -179,6 +196,7 @@ internal fun TestScope.node(
     store: InMemoryMessageStore = InMemoryMessageStore(),
     keys: InMemoryPeerKeyStore = InMemoryPeerKeyStore(),
     groupStore: InMemoryGroupStore = InMemoryGroupStore(),
+    nodeStore: InMemoryNodeStore = InMemoryNodeStore(),
     /** Defaults to a fixed seed per node created, so timings (hello jitter, who starts a handshake) repeat. */
     random: Random? = null
 ): TestNode {
@@ -188,9 +206,10 @@ internal fun TestScope.node(
         random ?: Random(7919L * (++net.nodesCreated)),
         cryptoDispatcher = StandardTestDispatcher(testScheduler),
         clock = { testScheduler.currentTime },
-        groupStore = groupStore
+        groupStore = groupStore,
+        nodeStore = nodeStore
     )
-    return TestNode(identity, messenger, transport, store, keys, groupStore)
+    return TestNode(identity, messenger, transport, store, keys, groupStore, nodeStore)
 }
 
 /** Lets queued sends/relays/ACKs run, but stays below the 2 s tick of the HELLO loop. */

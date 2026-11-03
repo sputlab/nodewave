@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             NodeWaveTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = TacticalBackground) {
-                    MainScreen()
+                    com.nodewave.mesh.ui.AppRoot()
                 }
             }
         }
@@ -90,7 +90,7 @@ class MainActivity : ComponentActivity() {
 internal val Mono = FontFamily.Monospace
 
 @Composable
-private fun MainScreen(vm: MainViewModel = viewModel()) {
+internal fun DiagnosticsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val state by vm.transportState.collectAsStateWithLifecycle()
     val nodes by vm.nodes.collectAsStateWithLifecycle()
@@ -135,6 +135,9 @@ private fun MainScreen(vm: MainViewModel = viewModel()) {
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        TextButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 4.dp)) {
+            Text("‹ BACK TO APP", color = TacticalGreen, fontFamily = Mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
         Header(
             nodeName = vm.localNodeName,
             nodeId = vm.localNodeId,

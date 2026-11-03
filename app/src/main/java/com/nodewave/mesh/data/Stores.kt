@@ -1,6 +1,7 @@
 package com.nodewave.mesh.data
 
 import com.nodewave.mesh.protocol.ChatMessage
+import com.nodewave.mesh.protocol.GeoPosition
 import com.nodewave.mesh.protocol.Group
 
 /** Persistent chat history. Implementations must be safe to call from any coroutine. */
@@ -25,6 +26,41 @@ interface PeerKeyStore {
 
     /** Node ID to the key verified in person. */
     suspend fun verifiedKeys(): Map<String, ByteArray>
+
+    /** Drops the stored key and the verified mark of a node. */
+    suspend fun forget(nodeId: String)
+}
+
+/** What we remember about a node besides its key. */
+data class StoredNode(
+    val id: String,
+    val name: String,
+    val alias: String?,
+    val favorite: Boolean,
+    val firstSeen: Long,
+    val lastSeen: Long,
+    val position: GeoPosition?,
+    /** When [position] was taken (seconds since the epoch, from the sender's clock). */
+    val positionTime: Long
+)
+
+/** The nodes we have seen: names, user labels, last sighting and last known position. */
+interface NodeStore {
+    suspend fun all(): List<StoredNode>
+    suspend fun noteSeen(id: String, name: String, time: Long)
+    suspend fun setAlias(id: String, alias: String?)
+    suspend fun setFavorite(id: String, favorite: Boolean)
+    suspend fun savePosition(id: String, position: GeoPosition)
+    suspend fun forget(id: String)
+}
+
+object NoNodeStore : NodeStore {
+    override suspend fun all(): List<StoredNode> = emptyList()
+    override suspend fun noteSeen(id: String, name: String, time: Long) = Unit
+    override suspend fun setAlias(id: String, alias: String?) = Unit
+    override suspend fun setFavorite(id: String, favorite: Boolean) = Unit
+    override suspend fun savePosition(id: String, position: GeoPosition) = Unit
+    override suspend fun forget(id: String) = Unit
 }
 
 /** Persistent groups (joined and pending invitations). */

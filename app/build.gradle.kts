@@ -46,6 +46,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     // QR codes for verifying contacts in person: ZXing (Apache-2.0) and CameraX (Apache-2.0), no Google Play Services
     implementation(libs.zxing.core)
+    // Offline-capable map view (Apache-2.0, no Google services); tiles come from files or from a server the user chooses
+    implementation(libs.osmdroid)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)

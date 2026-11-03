@@ -90,6 +90,11 @@ class SessionManager(
     private val localId = identity.nodeId
     private val pinned = HashMap<String, ByteArray>()
 
+    @Synchronized
+    fun unpin(nodeId: String) {
+        pinned.remove(nodeId)
+    }
+
     /** From now on only [identityKey] is accepted for [nodeId]: the key the user verified in person (QR code). */
     @Synchronized
     fun pin(nodeId: String, identityKey: ByteArray) {

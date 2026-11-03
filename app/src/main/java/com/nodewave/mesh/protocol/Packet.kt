@@ -14,7 +14,10 @@ enum class PacketType(val code: Int) {
     KEY(5),
 
     /** Group chat traffic (message, invitation, leave); sealed plaintext is a [GroupCodec] record. */
-    GROUP(6);
+    GROUP(6),
+
+    /** A node's position, sealed; see [GeoPosition]. */
+    POSITION(7);
 
     companion object {
         fun fromCode(code: Int): PacketType? = entries.firstOrNull { it.code == code }

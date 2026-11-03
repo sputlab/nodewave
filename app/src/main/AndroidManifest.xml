@@ -17,9 +17,18 @@
     <uses-permission
         android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
-    <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="30" />
+    <!--
+      Location: on API 29-30 BLE scanning needs it. On API 31+ it is never used for BLE; it is only asked
+      for when the user turns on position sharing or the "my position" button of the map.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- Only to download offline map areas when the user asks; the mesh itself never touches the internet. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- LoRa boards (E22-900T22U, ESP32 boards) will connect through a USB OTG cable. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <!-- API 31+: granular Bluetooth permissions -->
     <uses-permission

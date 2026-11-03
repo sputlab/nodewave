@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 ## [Unreleased]
 
 ### Added
+- **New interface**, tactical and modern: five screens behind a bottom bar, an animated radar, glow and corner-bracket panels, hexagonal node avatars, signal bars.
+  - **CHATS**: conversation list with unread counts and group invitations; personal and group conversations as bubbles with delivery state; creating and managing groups (members, admin, leave).
+  - **NETWORK**: radar of the nodes around you (closer = stronger signal), live counters (in range, via relay, encrypted, sent, received, delivered, relayed) and a feed of what happens on the mesh.
+  - **MAP**: offline-capable map (osmdroid) with the nodes that shared a position and your own; import a map file, or download the visible area from a tile server you configure.
+  - **NODES**: every node ever seen, with search and filters (favourites, verified, in range), a label of your own, favourites, verification by QR code, position, "forget".
+  - **SETTINGS**: BLE scan and announce profiles and power (applied by restarting the radio), LoRa board parameters (saved for when a board is connected; USB devices are listed), position sharing, map sources, clear history, diagnostics, about.
+  - The previous test console lives on as Diagnostics (Settings).
+- **Position sharing**: a new sealed packet type `POSITION`, sent one copy per recipient to nobody, only verified contacts, or everyone in range (per-node policy), at most once every 20 s per recipient, older positions never replace newer ones. A fixed station can share hand-entered coordinates every minute without the GPS. The GPS runs only while the app is on screen.
+- **Known nodes** are remembered in the database (version 4): names, labels, favourites, last seen and last position. A conversation list, activity feed and statistics are derived from the same state.
+- `INTERNET` permission, used only for downloading map tiles on request; `ACCESS_FINE_LOCATION` on every API level, asked only for position features (BLE on API 31+ still never uses location); `usb.host` as an optional feature.
+- Groups are now stored in the database (they had only been kept in memory by the app).
+- 190 unit tests (new: position codec and policy, directory, conversations, activity). Each rule was checked by breaking it.
+
+### Added
 - **Link benchmark** (BENCH tab): between two directly visible phones it opens a fresh link and measures connection time, negotiated MTU, throughput and write latency with acknowledged writes and with write-without-response (about 24 KB each, counted by the receiver, so loss shows), plus RSSI at the start and end. "repeat" runs it every 20 s so you can walk away and watch range. Results go to the `MESH_RADIO` log as `BENCH ...`. The frames (`BenchFrame`) are consumed by the transport and never reach the protocol.
 
 ## [0.6.0] - 2026-11-01

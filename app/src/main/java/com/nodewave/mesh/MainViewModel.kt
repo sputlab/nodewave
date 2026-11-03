@@ -4,7 +4,20 @@ import android.app.Application
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import com.nodewave.mesh.crypto.ContactCode
+import android.hardware.usb.UsbManager
+import androidx.lifecycle.viewModelScope
+import com.nodewave.mesh.data.AppSettings
+import com.nodewave.mesh.protocol.ActivityEvent
 import com.nodewave.mesh.protocol.ChatMessage
+import com.nodewave.mesh.protocol.Conversation
+import com.nodewave.mesh.protocol.GeoPosition
+import com.nodewave.mesh.protocol.KnownNode
+import com.nodewave.mesh.protocol.MeshStats
+import com.nodewave.mesh.protocol.PacketType
+import com.nodewave.mesh.protocol.conversations
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import com.nodewave.mesh.protocol.Group
 import com.nodewave.mesh.protocol.MeshMessenger
 import com.nodewave.mesh.protocol.NodeEntry
@@ -35,6 +48,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val messages: StateFlow<List<ChatMessage>> = messenger.messages
     val verifiedPeers: StateFlow<Set<String>> = messenger.verifiedPeers
     val groups: StateFlow<List<Group>> = messenger.groups
+    val knownNodes: StateFlow<List<KnownNode>> = messenger.knownNodes
+    val positions: StateFlow<Map<String, GeoPosition>> = messenger.positions
+    val activity: StateFlow<List<ActivityEvent>> = messenger.activity
+    val stats: StateFlow<MeshStats> = messenger.stats
+    val settings: StateFlow<AppSettings> = engine.settings.settings
+    val ownPosition: StateFlow<GeoPosition?> = engine.positionTracker.latest
+
+    val conversations: StateFlow<List<Conversation>> = combine(messenger.messages, messenger.groups, messenger.knownNodes, engine.settings.lastRead) { msgs, groups, known, read ->
+        val names = known.associate { it.id to it.name }
+        val fallback = msgs.associate { it.peerId to it.peerName }
+        conversations(msgs, groups, { id -> names[id] ?: fallback[id] ?: id.take(6) }, read)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val unreadTotal: StateFlow<Int> = conversations.combine(MutableStateFlow(0)) { list, _ -> list.sumOf { it.unread } + list.count { it.invited } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
     val logLines: StateFlow<List<String>> = MeshLog.lines
 
     private val _selectedGroupId = MutableStateFlow<String?>(null)
@@ -147,5 +176,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(20_000)
             }
         }
+    }
+
+    // ---- chats
+
+    fun markRead(conversationKey: String) = engine.settings.markRead(conversationKey, System.currentTimeMillis())
+
+    fun sendToPeer(peerId: String, text: String): Boolean {
+        val t = text.trim()
+        if (t.isEmpty()) return false
+        messenger.sendText(peerId, t)
+        return true
+    }
+
+    fun pingPeer(peerId: String) = messenger.sendPing(peerId)
+
+    /** Creates a group and returns its id, or null if the name or the member list is not acceptable. */
+    fun createGroupId(name: String, members: Set<String>): String? = messenger.createGroup(name, members)?.id
+
+    // ---- known nodes
+
+    fun setAlias(nodeId: String, alias: String?) = messenger.setAlias(nodeId, alias)
+    fun setFavorite(nodeId: String, favorite: Boolean) = messenger.setFavorite(nodeId, favorite)
+    fun forgetNode(nodeId: String) = messenger.forgetNode(nodeId)
+
+    // ---- settings and position
+
+    fun updateSettings(change: (AppSettings) -> AppSettings) = engine.settings.update(change)
+    fun hasLocationPermission() = engine.positionTracker.hasPermission()
+    fun startPositionTracking() = engine.positionTracker.start()
+    fun stopPositionTracking() = engine.positionTracker.stop()
+
+    /** USB devices on the OTG port, for the LoRa boards section: (name, vendor:product, has permission). */
+    fun usbDevices(): List<Triple<String, String, Boolean>> {
+        val manager = getApplication<Application>().getSystemService(UsbManager::class.java) ?: return emptyList()
+        return manager.deviceList.values.map {
+            Triple(it.productName ?: it.deviceName, "%04x:%04x".format(it.vendorId, it.productId), manager.hasPermission(it))
+        }
+    }
+
+    fun appVersion(): String = getApplication<Application>().let {
+        runCatching { it.packageManager.getPackageInfo(it.packageName, 0).versionName }.getOrNull() ?: "?"
     }
 }
