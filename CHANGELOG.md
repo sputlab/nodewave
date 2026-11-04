@@ -5,13 +5,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-04
+
+The tag `v0.9.1` was created on a commit that held only the move of the website (its app version still said 0.9.0); this release contains everything meant for it.
+
+### Fixed
+- The icon shown inside the app (top bar and splash screen) was the old one; it is now the current icon, `docs/images/icon.png`.
+
+### Changed
+- The website moved from `website/` to `docs/`, the only folder besides the repository root that GitHub Pages can serve; it is published from the branch (`main` `/docs`) and the Pages workflow is gone. See `docs/SITE.md`.
+
 ## [0.9.0] - 2026-11-04
 
 The app gets its icon and a splash screen, a clearer tab bar, a readable status bar, a more usable map, and a website.
 
 ### Added
 - **The official icon inside the app**: in the top bar next to the name, and on a **splash screen** at start (icon, name, version and nodewave.org; it fades after under two seconds or on a tap).
-- **`website/`**: static presentation site (English) for GitHub Pages on **nodewave.org** (`CNAME`), deployed by `.github/workflows/pages.yml`, with screenshots of the app in use. The same screenshots are in the README and in `fastlane/metadata/android/en-US/images/phoneScreenshots/` for F-Droid.
+- **Website** in `docs/` (English), served by GitHub Pages from `main` `/docs` on **nodewave.org** (`CNAME`), with screenshots of the app in use. The same screenshots are in the README and in `fastlane/metadata/android/en-US/images/phoneScreenshots/` for F-Droid.
 - A node set to a **fixed position** now shows that position as its own marker ("FIXED POSITION") and no longer follows the GPS.
 
 ### Changed

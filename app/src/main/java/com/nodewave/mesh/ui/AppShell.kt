@@ -166,7 +166,7 @@ private fun TopBar(nodeName: String, state: TransportState, active: Boolean, onT
     ) {
         androidx.compose.foundation.Image(
             painterResource(com.nodewave.mesh.R.drawable.app_icon), contentDescription = "NodeWave",
-            modifier = Modifier.size(38.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+            modifier = Modifier.size(38.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(percent = 22))
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
@@ -247,7 +247,7 @@ private fun Splash(onSkip: () -> Unit) {
         }) {
             androidx.compose.foundation.Image(
                 painterResource(com.nodewave.mesh.R.drawable.app_icon), contentDescription = "NodeWave",
-                modifier = Modifier.size(150.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(34.dp))
+                modifier = Modifier.size(140.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(percent = 22))
             )
         }
         Spacer(Modifier.height(28.dp))
