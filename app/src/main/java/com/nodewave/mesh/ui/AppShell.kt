@@ -13,11 +13,19 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +38,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -134,6 +144,11 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         if (diagnostics) {
             Box(Modifier.fillMaxSize().background(TacticalBackground)) { DiagnosticsScreen(vm) { diagnostics = false } }
         }
+        var splash by rememberSaveable { mutableStateOf(true) }
+        LaunchedEffect(Unit) { delay(1700); splash = false }
+        androidx.compose.animation.AnimatedVisibility(splash, enter = fadeIn(), exit = fadeOut(androidx.compose.animation.core.tween(450))) {
+            Splash(onSkip = { splash = false })
+        }
     }
 }
 
@@ -149,6 +164,11 @@ private fun TopBar(nodeName: String, state: TransportState, active: Boolean, onT
         Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        androidx.compose.foundation.Image(
+            painterResource(com.nodewave.mesh.R.drawable.app_icon), contentDescription = "NodeWave",
+            modifier = Modifier.size(38.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(9.dp))
+        )
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("NODEWAVE", color = TacticalGreen, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 17.sp, letterSpacing = 3.sp)
@@ -171,22 +191,22 @@ private fun BottomBar(selected: Int, unread: Int, onSelect: (Int) -> Unit) {
     ) {
         Tab.entries.forEachIndexed { i, tab ->
             val on = i == selected
-            val color = if (on) TacticalGreen else TacticalDim
+            val p by androidx.compose.animation.core.animateFloatAsState(if (on) 1f else 0f, androidx.compose.animation.core.tween(220), label = "tabOn")
+            val color = androidx.compose.ui.graphics.lerp(TacticalDim, TacticalGreen, p)
             Column(
-                Modifier.weight(1f).clickable { onSelect(i) }.padding(top = 8.dp, bottom = 6.dp).drawBehind {
-                    if (on) drawRect(
-                        Brush.verticalGradient(listOf(TacticalGreen.copy(alpha = 0.16f), Color.Transparent)), size = size
-                    )
-                    if (on) drawLine(TacticalGreen, Offset(size.width * 0.3f, 0f), Offset(size.width * 0.7f, 0f), 3f)
-                },
+                Modifier.weight(1f).clickable { onSelect(i) }.padding(top = 9.dp, bottom = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Box {
+                Box(
+                    Modifier.background(TacticalGreen.copy(alpha = 0.16f * p), androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                        .border(1.dp, TacticalGreen.copy(alpha = 0.55f * p), androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 3.dp)
+                ) {
                     TabGlyph(tab.icon, color)
                     if (tab == Tab.CHATS && unread > 0) {
                         // sits on the icon's upper right corner; the text is centred without the font's extra padding
                         Box(
-                            Modifier.align(Alignment.TopEnd).offset(x = 9.dp, y = (-1).dp).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                            Modifier.align(Alignment.TopEnd).offset(x = 14.dp, y = (-3).dp).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
                                 .background(TacticalAmber, CircleShape).padding(horizontal = 3.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -205,8 +225,38 @@ private fun BottomBar(selected: Int, unread: Int, onSelect: (Int) -> Unit) {
                         }
                     }
                 }
-                Text(tab.label.uppercase(), color = color, fontFamily = Mono, fontSize = 9.sp, letterSpacing = 0.8.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+                Text(tab.label.uppercase(), color = color, fontFamily = Mono, fontSize = 9.sp, letterSpacing = 0.8.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal, maxLines = 1, softWrap = false)
             }
         }
+    }
+}
+
+@Composable
+private fun Splash(onSkip: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "" }
+    val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "splash").animateFloat(
+        0.55f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(900), androidx.compose.animation.core.RepeatMode.Reverse), label = "glow"
+    )
+    Column(
+        Modifier.fillMaxSize().background(TacticalBackground).clickable(onClick = onSkip).systemBarsPadding().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+    ) {
+        Box(Modifier.drawBehind {
+            drawCircle(Brush.radialGradient(listOf(TacticalGreen.copy(alpha = 0.35f * pulse), Color.Transparent)), radius = size.minDimension * 0.95f)
+        }) {
+            androidx.compose.foundation.Image(
+                painterResource(com.nodewave.mesh.R.drawable.app_icon), contentDescription = "NodeWave",
+                modifier = Modifier.size(150.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(34.dp))
+            )
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("NODEWAVE", color = TacticalGreen, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 28.sp, letterSpacing = 6.sp)
+        Spacer(Modifier.height(6.dp))
+        Text("OFF-GRID MESH WALKIE-TALKIE", color = TacticalDim, fontFamily = Mono, fontSize = 11.sp, letterSpacing = 2.sp)
+        Spacer(Modifier.height(22.dp))
+        Text("v$version", color = TacticalAmber, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Spacer(Modifier.height(6.dp))
+        Text("nodewave.org", color = TacticalDim, fontFamily = Mono, fontSize = 13.sp)
     }
 }

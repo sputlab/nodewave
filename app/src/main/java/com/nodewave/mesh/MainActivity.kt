@@ -80,7 +80,11 @@ import com.nodewave.mesh.ui.theme.TacticalRed
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // the app is dark in every system theme: light status and navigation bar icons, always
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         setContent {
             NodeWaveTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = TacticalBackground) {

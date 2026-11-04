@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NodeWave - off-grid mesh walkie-talkie for Android</title>
+<meta name="description" content="NodeWave: phones talk to each other over Bluetooth Low Energy with end-to-end encryption. No internet, no servers, no Google services. Open source, GPL-3.0.">
+<meta name="theme-color" content="#050a07">
+<link rel="canonical" href="https://nodewave.org/">
+<meta property="og:title" content="NodeWave - off-grid mesh walkie-talkie for Android">
+<meta property="og:description" content="Phones talk to each other over Bluetooth Low Energy, end-to-end encrypted, with no internet and no servers.">
+<meta property="og:image" content="https://nodewave.org/assets/screens/chats.png">
+<meta property="og:url" content="https://nodewave.org/">
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand mono" href="#"><img src="assets/icon.png" alt="">NODEWAVE</a>
+  <nav><a href="#screens">Screens</a><a href="#features">Features</a><a href="#security">Security</a><a href="#get">Get it</a><a href="https://github.com/sputlab/nodewave">GitHub</a></nav>
+</div></header>
+
+<main>
+<div class="wrap">
+  <div class="hero">
+    <img src="assets/icon.png" alt="NodeWave icon">
+    <h1 class="mono">NODEWAVE</h1>
+    <p class="tag">An off-grid mesh walkie-talkie for Android. Phones talk to each other directly over Bluetooth Low Energy: no internet, no servers, no Google services.</p>
+    <a class="btn primary" href="https://github.com/sputlab/nodewave/releases">Download</a>
+    <a class="btn ghost" href="https://github.com/sputlab/nodewave">Source code</a>
+    <p class="note">Pre-release software. Android 10 or later.</p>
+  </div>
+
+  <section id="screens">
+    <h2 class="mono">In use</h2>
+    <p class="note">Screenshots from real phones talking to each other over Bluetooth, no network involved. The two nodes in the map are placed on a hiking trail for the picture.</p>
+    <div class="shots">
+      <figure><img src="assets/screens/chats.png" alt="Chats list with a group and a direct conversation" loading="lazy"><figcaption>Chats and groups</figcaption></figure>
+      <figure><img src="assets/screens/direct-chat.png" alt="Direct encrypted conversation between two nodes" loading="lazy"><figcaption>Encrypted direct chat, with delivery receipts</figcaption></figure>
+      <figure><img src="assets/screens/group-chat.png" alt="Group chat with three members" loading="lazy"><figcaption>Group chat for up to 8 people</figcaption></figure>
+      <figure><img src="assets/screens/map.png" alt="Offline vector map with two nodes" loading="lazy"><figcaption>Offline map with node positions</figcaption></figure>
+      <figure><img src="assets/screens/network.png" alt="Radar and list of nodes in range" loading="lazy"><figcaption>Radar and signal strength of nodes around you</figcaption></figure>
+      <figure><img src="assets/screens/nodes.png" alt="Known nodes, verified and encrypted" loading="lazy"><figcaption>Known nodes and verified contacts</figcaption></figure>
+      <figure><img src="assets/screens/settings.png" alt="Settings: identity and Bluetooth radio" loading="lazy"><figcaption>Identity and radio settings</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2 class="mono">What it does</h2>
+    <div class="grid">
+      <div class="card"><h3>Mesh relay</h3><p>Messages hop across intermediate phones to reach nodes out of direct range, with delivery receipts that travel back the same way.</p></div>
+      <div class="card"><h3>Encrypted end to end</h3><p>Forward-secret session keys between each pair of nodes. Relays carry what they cannot read.</p></div>
+      <div class="card"><h3>Verified contacts</h3><p>Scan a QR code in person to confirm who a node ID belongs to; the key is then pinned.</p></div>
+      <div class="card"><h3>Group chat</h3><p>Up to 8 people, sealed separately for every member, managed by an admin.</p></div>
+      <div class="card"><h3>Offline maps</h3><p>See nodes on a vector map that lives on the phone: one Mapsforge file for a whole country, downloaded once.</p></div>
+      <div class="card"><h3>Keeps listening</h3><p>The radio runs as a foreground service, with the screen off or the app closed.</p></div>
+    </div>
+  </section>
+
+  <section id="security">
+    <h2 class="mono">Security, honestly</h2>
+    <p>Only the standard Java/Android cryptography is used: P-256 signed ephemeral key exchange, HKDF-SHA256 and AES-256-GCM. Session keys live in memory only and are replaced every hour. The design has <strong>not been independently audited</strong>, and the limitations (visible metadata, trust on first contact) are written down in the <a href="https://github.com/sputlab/nodewave/blob/main/docs/SECURITY.md">security notes</a>.</p>
+  </section>
+
+  <section id="get">
+    <h2 class="mono">Get it</h2>
+    <p>Debug-signed APKs are attached to each <a href="https://github.com/sputlab/nodewave/releases">release</a>. To build it yourself:</p>
+<pre>git clone https://github.com/sputlab/nodewave
+cd nodewave
+./gradlew assembleDebug</pre>
+    <p class="note">On Android 10 and 11, location services must be on or the system returns no Bluetooth scan results. NodeWave is built to be F-Droid ready; it has no proprietary dependencies.</p>
+  </section>
+</div>
+</main>
+
+<footer><div class="wrap">NodeWave is free software under the <a href="https://github.com/sputlab/nodewave/blob/main/LICENSE">GPL-3.0</a> licence. &middot; <a href="https://github.com/sputlab/nodewave">github.com/sputlab/nodewave</a></div></footer>
+</body>
+</html>

@@ -47,6 +47,7 @@ import com.nodewave.mesh.ui.theme.Mono
 import com.nodewave.mesh.ui.theme.Sans
 import com.nodewave.mesh.ui.theme.TacticalAmber
 import com.nodewave.mesh.ui.theme.TacticalDim
+import com.nodewave.mesh.ui.theme.TacticalBackground
 import com.nodewave.mesh.ui.theme.TacticalGreen
 import com.nodewave.mesh.ui.theme.TacticalRed
 import com.nodewave.mesh.ui.theme.TacticalSurface
@@ -139,6 +140,7 @@ private fun applySource(view: MapView, context: Context, tileUrl: String, archiv
     view.tag = key
     var offline = false
     var bounds: BoundingBox? = null
+    view.isTilesScaledToDpi = false
     if (archive != null) {
         val file = File(mapDir(context), archive)
         if (file.exists()) {
@@ -147,8 +149,11 @@ private fun applySource(view: MapView, context: Context, tileUrl: String, archiv
                     MapFiles.Kind.MAPSFORGE -> {
                         if (!mapsforgeReady) { AndroidGraphicFactory.createInstance(context.applicationContext as Application); mapsforgeReady = true }
                         val source = MapsForgeTileSource.createFromFiles(arrayOf(file), InternalRenderTheme.DEFAULT, "default")
+                        source.setUserScaleFactor(0.5f) // labels and symbols at the size of a printed map, not poster size
                         view.setTileProvider(MapsForgeTileProvider(SimpleRegisterReceiver(context), source, null))
                         view.setUseDataConnection(false)
+                        // the renderer draws labels and symbols for the screen density: tiles must be that big too
+                        view.isTilesScaledToDpi = true
                         bounds = source.boundsOsmdroid
                         offline = true
                     }
@@ -289,7 +294,7 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
         Column(Modifier.align(Alignment.TopStart).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Chip("${withPosition.size} on map", TacticalGreen, filled = true)
-                if (own != null) Chip("GPS ±${own!!.accuracyM} m", TacticalGreen)
+                if (own != null) Chip(if (own!!.accuracyM == 0) "FIXED POSITION" else "GPS ±${own!!.accuracyM} m", TacticalGreen, modifier = Modifier.background(TacticalBackground.copy(alpha = 0.9f), androidx.compose.foundation.shape.RoundedCornerShape(5.dp)))
             }
             if (!hasSource) {
                 TacPanel(title = "No offline map", accent = TacticalAmber) {
@@ -306,7 +311,8 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
             )
         }
         Column(Modifier.align(Alignment.BottomEnd).padding(10.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            coverage?.let { area -> TacButton("Map area", { map?.zoomToBoundingBox(area, true) }, kind = TacKind.AMBER, small = true) }
+            val plate = Modifier.background(TacticalBackground.copy(alpha = 0.9f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+            coverage?.let { area -> TacButton("Map area", { map?.zoomToBoundingBox(area, true) }, modifier = plate, kind = TacKind.AMBER, small = true) }
             TacButton("Fit nodes", {
                 val view = map ?: return@TacButton
                 val pts = withPosition.mapNotNull { it.position }.map { GeoPoint(it.lat, it.lon) } + listOfNotNull(own?.let { GeoPoint(it.lat, it.lon) })
@@ -315,7 +321,7 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
                     pts.size == 1 -> { view.controller.setZoom(16.0); view.controller.animateTo(pts[0]) }
                     else -> view.zoomToBoundingBox(org.osmdroid.util.BoundingBox.fromGeoPointsSafe(pts).increaseByScale(1.4f), true)
                 }
-            }, small = true)
+            }, modifier = plate, small = true)
             TacButton("My position", {
                 if (vm.hasLocationPermission()) {
                     vm.startPositionTracking()
@@ -330,7 +336,7 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
                 val manager = CacheManager(view)
                 val tiles = manager.possibleTilesInArea(view.boundingBox, zoom, maxZoom)
                 downloadPlan = DownloadPlan(zoom, maxZoom, tiles)
-            }, kind = TacKind.AMBER, small = true)
+            }, modifier = plate, kind = TacKind.AMBER, small = true)
         }
     }
 

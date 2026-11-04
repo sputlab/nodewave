@@ -4,9 +4,26 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.8.1** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
+**Status: v0.9.0** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
 
-## Features (v0.8.1)
+## Screenshots
+
+<p align="center">
+<img src="website/assets/screens/chats.png" width="180" alt="Chats and groups">
+<img src="website/assets/screens/direct-chat.png" width="180" alt="Encrypted direct chat">
+<img src="website/assets/screens/group-chat.png" width="180" alt="Group chat">
+<img src="website/assets/screens/map.png" width="180" alt="Offline map">
+</p>
+<p align="center">
+<img src="website/assets/screens/network.png" width="180" alt="Radar and nodes in range">
+<img src="website/assets/screens/nodes.png" width="180" alt="Known nodes">
+<img src="website/assets/screens/settings.png" width="180" alt="Settings">
+<img src="website/assets/screens/splash.png" width="180" alt="Splash screen">
+</p>
+
+Taken on real phones talking over Bluetooth (the two nodes on the map are given a fixed position on a hiking trail for the picture). Website: [nodewave.org](https://nodewave.org) (source in [`website/`](website/)).
+
+## Features (v0.9.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Identity key pair per install; the node ID is derived from the public key, so peers are recognised even when BLE addresses rotate and an ID cannot be claimed by someone without the key.

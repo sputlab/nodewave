@@ -5,6 +5,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-04
+
+The app gets its icon and a splash screen, a clearer tab bar, a readable status bar, a more usable map, and a website.
+
+### Added
+- **The official icon inside the app**: in the top bar next to the name, and on a **splash screen** at start (icon, name, version and nodewave.org; it fades after under two seconds or on a tap).
+- **`website/`**: static presentation site (English) for GitHub Pages on **nodewave.org** (`CNAME`), deployed by `.github/workflows/pages.yml`, with screenshots of the app in use. The same screenshots are in the README and in `fastlane/metadata/android/en-US/images/phoneScreenshots/` for F-Droid.
+- A node set to a **fixed position** now shows that position as its own marker ("FIXED POSITION") and no longer follows the GPS.
+
+### Changed
+- The tab bar marks the current section with a pill around the icon and a green bold label (no bar, no glow); the change is animated.
+- Status and navigation bar icons are always light on the dark background (they were dark on dark with the phone in light theme).
+- Map: labels of the vector map are drawn at half the size they had (they were poster-sized), and the buttons and chips over the map have a dark plate so they stay readable on a white map.
+
 ## [0.8.1] - 2026-11-04
 
 Fixes found on the test phones: the map download crash, a radio that would not start, the diagnostics page, the unread badge.

@@ -78,6 +78,8 @@ class MeshEngine(app: Application) {
         scope.launch {
             settings.settings.map { it.nodeName }.distinctUntilChanged().collect { radio.renameNode(localNodeName) }
         }
+        // a fixed station does not follow the GPS
+        scope.launch { settings.settings.map { it.useFixedPosition }.distinctUntilChanged().collect { if (it) positionTracker.stop() } }
         scope.launch { settings.settings.map { it.positionSharing }.distinctUntilChanged().collect { messenger.setPositionSharing(it) } }
         // A station that does not move offers its hand-entered position every minute, screen on or off.
         scope.launch {

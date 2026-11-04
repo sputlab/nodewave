@@ -58,7 +58,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val activity: StateFlow<List<ActivityEvent>> = messenger.activity
     val stats: StateFlow<MeshStats> = messenger.stats
     val settings: StateFlow<AppSettings> = engine.settings.settings
-    val ownPosition: StateFlow<GeoPosition?> = engine.positionTracker.latest
+    /** A station set to a fixed position shows (and sends) that position; otherwise the latest GPS fix. */
+    val ownPosition: StateFlow<GeoPosition?> = combine(engine.positionTracker.latest, engine.settings.settings) { gps, s ->
+        if (s.useFixedPosition && s.fixedPosition != null) s.fixedPosition.copy(timeSec = 0) else gps
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val conversations: StateFlow<List<Conversation>> = combine(messenger.messages, messenger.groups, messenger.knownNodes, engine.settings.lastRead) { msgs, groups, known, read ->
         val names = known.associate { it.id to it.name }
@@ -230,7 +233,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSettings(change: (AppSettings) -> AppSettings) = engine.settings.update(change)
     fun hasLocationPermission() = engine.positionTracker.hasPermission()
-    fun startPositionTracking() = engine.positionTracker.start()
+    fun startPositionTracking() { if (!engine.settings.settings.value.useFixedPosition) engine.positionTracker.start() }
     fun stopPositionTracking() = engine.positionTracker.stop()
 
     /** USB devices on the OTG port, for the LoRa boards section: (name, vendor:product, has permission). */
