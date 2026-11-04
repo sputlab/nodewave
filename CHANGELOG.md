@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-04
+
+A new interface, positions and a map, node names, a link benchmark.
+
 ### Added
 - **Editable node name** (Settings, Identity): the name becomes a label of the unchanged ID, announced over BLE (up to 19 bytes, cleaned of control characters and never cut inside a character), shown in the top bar, used in the contact code, and applied at once by refreshing the advertisement. Empty restores the phone's model.
 - Map attribution "© OpenStreetMap contributors" whenever a map source is set.
