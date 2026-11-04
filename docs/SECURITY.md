@@ -1,6 +1,6 @@
 # NodeWave security notes
 
-Status: **v0.7.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
+Status: **v0.8.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
 Java/Android platform (no custom cryptography, no third-party crypto libraries), but nobody outside this project
 has reviewed it. Do not rely on it where lives or liberty depend on it.
 
@@ -79,7 +79,7 @@ rotation of the pairwise sessions apply unchanged. Rules, all enforced by the re
 
 ## Positions
 
-A node can send its position to nobody, to the contacts it verified, or to every node in range. The position
+A node can send its position to nobody, to the contacts *it* verified (verification is one-way: the receiver need not have verified the sender), or to every node in range. The position
 (`lat, lon, accuracy, time`, 14 bytes) travels as a sealed `POSITION` packet, one copy per recipient over the
 pairwise session, so a relay cannot read it. Receivers keep only the newest position per node. Limits: whoever
 receives a position can keep it and pass it on; with "everyone" any node in range, including a hostile one, gets

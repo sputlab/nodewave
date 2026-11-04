@@ -51,6 +51,22 @@ import com.nodewave.mesh.ui.theme.TacticalGreen
 import com.nodewave.mesh.ui.theme.TacticalRed
 import com.nodewave.mesh.ui.theme.TacticalSurface
 import com.nodewave.mesh.ui.theme.TacticalText
+import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color as AColor
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import com.nodewave.mesh.data.MapFiles
+import org.mapsforge.map.android.graphics.AndroidGraphicFactory
+import org.mapsforge.map.rendertheme.InternalRenderTheme
+import org.osmdroid.mapsforge.MapsForgeTileProvider
+import org.osmdroid.mapsforge.MapsForgeTileSource
+import org.osmdroid.util.BoundingBox
+import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.cachemanager.CacheManager
 import org.osmdroid.tileprovider.modules.OfflineTileProvider
@@ -91,21 +107,59 @@ private fun dot(color: Int, sizePx: Int, ring: Int): GradientDrawable = Gradient
     setSize(sizePx, sizePx)
 }
 
-/** Applies the user's map source to [view]; remembers what it applied in the view's tag so it only does it on change. */
-private fun applySource(view: MapView, context: Context, tileUrl: String, archive: String?) {
+private var mapsforgeReady = false
+
+/** Draws "you are here": a halo, a white ring, a bright core and a YOU tag, impossible to mistake for a node. */
+private fun ownIcon(context: Context): Drawable {
+    val w = 150; val h = 196; val cx = 75f; val cy = 75f
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    p.color = 0x5539FF14; c.drawCircle(cx, cy, 70f, p)
+    p.color = 0x8839FF14.toInt(); c.drawCircle(cx, cy, 52f, p)
+    p.color = AColor.WHITE; c.drawCircle(cx, cy, 36f, p)
+    p.color = 0xFF39FF14.toInt(); c.drawCircle(cx, cy, 28f, p)
+    p.color = 0xFF0B0F0C.toInt(); c.drawCircle(cx, cy, 9f, p)
+    val pill = RectF(22f, 154f, 128f, 192f)
+    p.color = 0xFF0B0F0C.toInt(); c.drawRoundRect(pill, 19f, 19f, p)
+    p.style = Paint.Style.STROKE; p.strokeWidth = 4f; p.color = 0xFF39FF14.toInt(); c.drawRoundRect(pill, 19f, 19f, p)
+    p.style = Paint.Style.FILL; p.color = 0xFF39FF14.toInt(); p.textAlign = Paint.Align.CENTER
+    p.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); p.textSize = 30f
+    c.drawText("YOU", cx, 182f, p)
+    return BitmapDrawable(context.resources, bmp)
+}
+
+/**
+ * Applies the user's map source to [view]; remembers what it applied in the view's tag so it only does it on change.
+ * Returns the area a vector map covers when it was just applied, so the view can be pointed at it.
+ */
+private fun applySource(view: MapView, context: Context, tileUrl: String, archive: String?): BoundingBox? {
     val key = "$tileUrl|$archive"
-    if (view.tag == key) return
+    if (view.tag == key) return null
     view.tag = key
     var offline = false
+    var bounds: BoundingBox? = null
     if (archive != null) {
         val file = File(mapDir(context), archive)
         if (file.exists()) {
             runCatching {
-                val provider = OfflineTileProvider(SimpleRegisterReceiver(context), arrayOf(file))
-                view.setTileProvider(provider)
-                provider.archives.firstOrNull()?.tileSources?.firstOrNull()?.let { view.setTileSource(FileBasedTileSource.getSource(it)) }
-                view.setUseDataConnection(false)
-                offline = true
+                when (MapFiles.kindOf(archive)) {
+                    MapFiles.Kind.MAPSFORGE -> {
+                        if (!mapsforgeReady) { AndroidGraphicFactory.createInstance(context.applicationContext as Application); mapsforgeReady = true }
+                        val source = MapsForgeTileSource.createFromFiles(arrayOf(file), InternalRenderTheme.DEFAULT, "default")
+                        view.setTileProvider(MapsForgeTileProvider(SimpleRegisterReceiver(context), source, null))
+                        view.setUseDataConnection(false)
+                        bounds = source.boundsOsmdroid
+                        offline = true
+                    }
+                    else -> {
+                        val provider = OfflineTileProvider(SimpleRegisterReceiver(context), arrayOf(file))
+                        view.setTileProvider(provider)
+                        provider.archives.firstOrNull()?.tileSources?.firstOrNull()?.let { view.setTileSource(FileBasedTileSource.getSource(it)) }
+                        view.setUseDataConnection(false)
+                        offline = true
+                    }
+                }
             }.onFailure { MeshLog.e("Map file $archive could not be opened", it) }
         }
     }
@@ -119,11 +173,19 @@ private fun applySource(view: MapView, context: Context, tileUrl: String, archiv
         }
     }
     view.overlayManager.tilesOverlay.apply {
-        setColorFilter(TilesOverlay.INVERT_COLORS) // dark, tactical look
-        // the inversion filter also flips these, so they are given as the inverse of the dark colours wanted
-        loadingBackgroundColor = 0xFFF4F0F3.toInt()
-        loadingLineColor = 0xFFDCC7D4.toInt()
+        if (bounds != null) {
+            // a vector map keeps its own colours: they stay readable in daylight, which is where a map is used
+            setColorFilter(null)
+            loadingBackgroundColor = 0xFF0B0F0C.toInt()
+            loadingLineColor = 0xFF23382B.toInt()
+        } else {
+            setColorFilter(TilesOverlay.INVERT_COLORS) // raster tiles: dark, tactical look
+            // the inversion filter also flips these, so they are given as the inverse of the dark colours wanted
+            loadingBackgroundColor = 0xFFF4F0F3.toInt()
+            loadingLineColor = 0xFFDCC7D4.toInt()
+        }
     }
+    return bounds
 }
 
 @Composable
@@ -138,6 +200,7 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
     var progress by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var centred by remember { mutableStateOf(false) }
+    var coverage by remember { mutableStateOf<BoundingBox?>(null) }
 
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) { vm.startPositionTracking(); message = "Waiting for a GPS fix…" } else message = "Location permission denied"
@@ -186,8 +249,10 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
                 }
             },
             update = { view ->
-                applySource(view, context, settings.tileUrl, settings.mapArchive)
-                view.overlays.removeAll { it is Marker }
+                val covered = applySource(view, context, settings.tileUrl, settings.mapArchive)
+                if (covered != null) coverage = covered
+                if (covered != null && own == null && withPosition.isEmpty()) view.post { view.zoomToBoundingBox(covered, false) }
+                view.overlays.removeAll { it is Marker || it is Polygon }
                 for (n in withPosition) {
                     val p = n.position!!
                     view.overlays += Marker(view).apply {
@@ -199,10 +264,19 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
                     }
                 }
                 own?.let { p ->
+                    if (p.accuracyM >= 8) {
+                        view.overlays += Polygon(view).apply {
+                            points = Polygon.pointsAsCircle(GeoPoint(p.lat, p.lon), p.accuracyM.toDouble())
+                            fillPaint.color = 0x2239FF14
+                            outlinePaint.color = 0x9939FF14.toInt()
+                            outlinePaint.strokeWidth = 3f
+                            setOnClickListener { _, _, _ -> false }
+                        }
+                    }
                     view.overlays += Marker(view).apply {
                         position = GeoPoint(p.lat, p.lon)
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                        icon = dot(TacticalGreen.toArgb(), 46, 7)
+                        setAnchor(Marker.ANCHOR_CENTER, 75f / 196f)
+                        icon = ownIcon(context)
                         title = "You"
                         snippet = "±${p.accuracyM} m"
                     }
@@ -232,6 +306,7 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
             )
         }
         Column(Modifier.align(Alignment.BottomEnd).padding(10.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            coverage?.let { area -> TacButton("Map area", { map?.zoomToBoundingBox(area, true) }, kind = TacKind.AMBER, small = true) }
             TacButton("Fit nodes", {
                 val view = map ?: return@TacButton
                 val pts = withPosition.mapNotNull { it.position }.map { GeoPoint(it.lat, it.lon) } + listOfNotNull(own?.let { GeoPoint(it.lat, it.lon) })

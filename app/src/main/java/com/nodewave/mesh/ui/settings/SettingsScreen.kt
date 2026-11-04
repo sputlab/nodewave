@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nodewave.mesh.MainViewModel
 import com.nodewave.mesh.data.LoraMode
+import com.nodewave.mesh.data.MapFiles
 import com.nodewave.mesh.data.LoraSettings
 import com.nodewave.mesh.protocol.GeoPosition
 import com.nodewave.mesh.protocol.PositionSharing
@@ -81,6 +82,7 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
                         if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null
                     } ?: "map.mbtiles"
                     val safe = display.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                    if (MapFiles.kindOf(safe) == MapFiles.Kind.UNKNOWN) throw java.io.IOException("Not a .map or .mbtiles file")
                     resolver.openInputStream(uri)!!.use { input -> File(mapDir(context), safe).outputStream().use { input.copyTo(it) } }
                     safe
                 }
@@ -94,7 +96,7 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
         item {
             TacPanel(title = "Identity") {
                 val current by vm.nodeName.collectAsStateWithLifecycle()
-                var draft by remember(current) { mutableStateOf(if (s.nodeName.isBlank()) "" else current) }
+                var draft by remember(current) { mutableStateOf(current) }
                 val bytes = draft.toByteArray(Charsets.UTF_8).size
                 Text(groupedId(vm.localNodeId), color = TacticalDim, fontFamily = Mono, fontSize = 11.sp)
                 TacTextField(
@@ -102,8 +104,8 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
                     Modifier.fillMaxWidth(), label = "Node name", placeholder = android.os.Build.MODEL
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    TacButton("Save", { vm.setNodeName(draft) }, kind = TacKind.PRIMARY, small = true, enabled = draft.trim() != (if (s.nodeName.isBlank()) "" else current))
-                    TacButton("Use model", { vm.setNodeName(""); draft = "" }, small = true, enabled = s.nodeName.isNotBlank())
+                    TacButton("Save", { vm.setNodeName(draft) }, kind = TacKind.PRIMARY, small = true, enabled = com.nodewave.mesh.protocol.NodeAdvertisement.cleanName(draft) != null && draft.trim() != current)
+                    TacButton("Use model", { vm.setNodeName("") }, small = true, enabled = s.nodeName.isNotBlank())
                     Text("$bytes / ${com.nodewave.mesh.protocol.NodeAdvertisement.MAX_NAME_BYTES} bytes", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                 }
                 Text("Announced to nearby nodes as the label of your ID, and put in your contact code. The ID itself never changes: it comes from a key that never leaves this phone. Others update it the next time they see you.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
@@ -131,7 +133,7 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
                 Text(
                     when (s.positionSharing) {
                         PositionSharing.OFF -> "Your position is never sent."
-                        PositionSharing.VERIFIED -> "Only nodes whose code you scanned receive it."
+                        PositionSharing.VERIFIED -> "Only the nodes whose code YOU scanned receive it. To see each other on the map, both of you must scan the other's code."
                         PositionSharing.EVERYONE -> "Every node in reach receives it, encrypted for that node."
                     } + " The GPS runs only while the app is open.",
                     color = TacticalDim, fontFamily = Sans, fontSize = 12.sp
@@ -142,17 +144,45 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
         }
         item {
             TacPanel(title = "Map") {
+                val dl by vm.mapDownload.collectAsStateWithLifecycle()
+                var link by remember { mutableStateOf("") }
                 Text(
-                    if (s.mapArchive != null) "Offline map file: ${s.mapArchive}" else "No offline map file imported.",
+                    if (s.mapArchive != null) "Map in use: ${s.mapArchive}" else "No offline map yet.",
                     color = TacticalText, fontFamily = Sans, fontSize = 13.sp
                 )
+                Text("Vector maps (Mapsforge, .map) are small and sharp at every zoom: one file covers a whole country. Download one here, import a file you already have, or use raster tiles (below).", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                SectionLabel("Download a map file")
+                MapFiles.PRESETS.forEach { p ->
+                    TacButton("${p.title} · ${p.size}", { link = p.url }, Modifier.fillMaxWidth(), small = true, enabled = dl?.running != true)
+                }
+                TacTextField(link, { link = it.trim() }, Modifier.fillMaxWidth(), label = "Link to a .map or .mbtiles file (https)", placeholder = "https://…/italy.map", mono = true, enabled = dl?.running != true)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TacButton(if (dl?.error != null && dl?.bytes != 0L) "Resume" else "Download", { vm.startMapDownload(link) }, kind = TacKind.PRIMARY, small = true, enabled = link.isNotBlank() && dl?.running != true)
+                    if (dl?.running == true) TacButton("Stop", { vm.cancelMapDownload() }, kind = TacKind.DANGER, small = true)
+                }
+                dl?.let { d ->
+                    if (d.running || d.finished) {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { if (d.finished) 1f else d.percent / 100f },
+                            modifier = Modifier.fillMaxWidth(), color = TacticalGreen, trackColor = com.nodewave.mesh.ui.theme.TacticalLine
+                        )
+                        Text(
+                            if (d.finished) "Saved ${d.fileName}: it is in use now" else "${d.fileName}  ${d.percent}%  ·  ${d.bytes / 1_000_000} / ${d.total / 1_000_000} MB",
+                            color = if (d.finished) TacticalGreen else TacticalAmber, fontFamily = Mono, fontSize = 11.sp
+                        )
+                    }
+                    d.error?.let { Text(it, color = TacticalRed, fontFamily = Mono, fontSize = 11.sp) }
+                }
+                Text("Use Wi-Fi: the Italy file is large. A stopped or interrupted download continues where it left off. This and the tile server below are the only things in the app that use the internet.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                SectionLabel("Or import a file")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TacButton("Import map file", { importMap.launch(arrayOf("*/*")) }, small = true)
-                    if (s.mapArchive != null) TacButton("Remove", { vm.updateSettings { it.copy(mapArchive = null) }; mapNote = "Map file removed from use" }, kind = TacKind.DANGER, small = true)
+                    if (s.mapArchive != null) TacButton("Delete map", { vm.removeMapFile(); mapNote = "Map file deleted" }, kind = TacKind.DANGER, small = true)
                 }
                 mapNote?.let { Text(it, color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
-                TacTextField(s.tileUrl, { v -> vm.updateSettings { it.copy(tileUrl = v.trim()) } }, Modifier.fillMaxWidth(), label = "Tile server URL (optional)", placeholder = "https://host/{z}/{x}/{y}.png", mono = true)
-                Text("Used only when you press Download area on the map, and for tiles not yet saved. Pick a server whose rules allow it: the public OpenStreetMap servers forbid bulk download. This is the only thing in the app that uses the internet.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                SectionLabel("Raster tiles (optional)")
+                TacTextField(s.tileUrl, { v -> vm.updateSettings { it.copy(tileUrl = v.trim()) } }, Modifier.fillMaxWidth(), label = "Tile server URL", placeholder = "https://host/{z}/{x}/{y}.png", mono = true)
+                Text("For the Download area button on the map. Pick a server whose rules allow downloading: the public OpenStreetMap servers forbid it.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
                 TacButton("Clear downloaded tiles", {
                     scope.launch { withContext(Dispatchers.IO) { File(mapDir(context), "tiles").deleteRecursively() }; mapNote = "Tile cache cleared" }
                 }, kind = TacKind.DANGER, small = true)

@@ -5,7 +5,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
-## [0.7.0] - 2026-11-04
+## [0.8.0] - 2026-11-04
+
+Offline vector maps, positions that reach everyone, a clearer "you" on the map.
+
+### Added
+- **Offline vector maps (Mapsforge).** The map reads Mapsforge `.map` files (OpenStreetMap data drawn on the phone, small, sharp at every zoom). Settings → Map downloads one from a link, with presets for Italy (a single file of about 1.7 GB, from download.mapsforge.org) and a tiny one for Monaco to try it; the download shows its progress, can be stopped and resumes where it left off, checks free space, saves under its name only when complete and, for a `.map`, only if it carries the Mapsforge signature. Import of a file you already have also works, and *Delete map* frees the space. A *Map area* button on the map jumps to the part of the world the file covers. New dependency: osmdroid-mapsforge (Mapsforge is LGPL-3.0, compatible with GPL-3.0). Raster tiles (MBTiles file or tile server) keep working.
+- The map shows **your own position unmistakably**: a glowing halo, a white ring, a bright core and a YOU tag, with a circle for the GPS accuracy.
+- 201 unit tests (new: map file names and signature, the downloader against a local server including resume, position delivery to late-comers).
+
+### Fixed
+- **Positions reached only some phones.** A position was offered only to the nodes in range at the moment of a GPS fix, and a phone that stands still gets no new fix, so a phone that came into range later never received it (on one phone you saw two nodes, on the others only one). Now the last position is offered to every node that comes into range, again every minute, and at once when sharing is turned on.
+- Position sharing set to *Verified* sends only to the nodes **you** verified, so it is one-way: two phones see each other only if each scanned the other's code. The setting now says so.
+- In Settings → Identity the field showed nothing until tapped when the node used the phone's model; it now shows the model name. Naming the node after the model is the same as using the model.
+
+## [0.7.0] - 2026-11-04 (installed on test phones, not tagged)
 
 A new interface, positions and a map, node names, a link benchmark.
 

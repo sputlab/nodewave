@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Build
 import com.nodewave.mesh.crypto.IdentityProvider
 import com.nodewave.mesh.data.KeystoreCipher
+import com.nodewave.mesh.data.MapDownloader
 import com.nodewave.mesh.data.NodeWaveDb
 import com.nodewave.mesh.data.SettingsStore
 import com.nodewave.mesh.data.SqliteGroupStore
@@ -45,6 +46,10 @@ class MeshEngine(app: Application) {
     val benchmark: LinkBenchmark = ble
     val radio: RadioControl = ble
     val settings = SettingsStore(app)
+
+    /** Where imported and downloaded map files live (and osmdroid keeps its tile cache). */
+    val mapsDir: java.io.File = java.io.File(app.filesDir, "osmdroid").also { it.mkdirs() }
+    val mapDownloader = MapDownloader(mapsDir, scope) { name -> settings.update { it.copy(mapArchive = name) } }
 
     private val db = NodeWaveDb(app)
     val messenger = MeshMessenger(

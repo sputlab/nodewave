@@ -11,8 +11,8 @@ android {
         applicationId = "com.nodewave.mesh"
         minSdk = 29
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.7.0"
+        versionCode = 10
+        versionName = "0.8.0"
     }
 
     buildTypes {
@@ -48,6 +48,8 @@ dependencies {
     implementation(libs.zxing.core)
     // Offline-capable map view (Apache-2.0, no Google services); tiles come from files or from a server the user chooses
     implementation(libs.osmdroid)
+    // Offline vector maps (Mapsforge .map files, LGPL-3.0, GPL-3.0 compatible)
+    implementation(libs.osmdroid.mapsforge)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)

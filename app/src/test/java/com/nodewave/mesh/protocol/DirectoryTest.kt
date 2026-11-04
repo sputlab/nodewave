@@ -55,14 +55,22 @@ class DirectoryTest {
         settle()
         assertTrue("OFF sends nothing", b.messenger.positions.value.isEmpty() && c.messenger.positions.value.isEmpty())
 
-        a.messenger.setPositionSharing(PositionSharing.VERIFIED)
-        a.messenger.publishPosition(pos(101))
+        a.messenger.setPositionSharing(PositionSharing.VERIFIED) // the position held back while OFF goes out now
         settle()
-        assertEquals(101L, b.messenger.positions.value.getValue(a.id).timeSec)
+        assertEquals(100L, b.messenger.positions.value.getValue(a.id).timeSec)
         assertTrue("c is not verified", c.messenger.positions.value.isEmpty())
 
         later(21_000)
+        a.messenger.publishPosition(pos(101))
+        settle()
+        assertEquals(101L, b.messenger.positions.value.getValue(a.id).timeSec)
+        assertTrue(c.messenger.positions.value.isEmpty())
+
+        later(21_000)
         a.messenger.setPositionSharing(PositionSharing.EVERYONE)
+        settle()
+        assertEquals(101L, c.messenger.positions.value.getValue(a.id).timeSec) // c gets what a already had
+        later(21_000)
         a.messenger.publishPosition(pos(102))
         settle()
         assertEquals(102L, c.messenger.positions.value.getValue(a.id).timeSec)
@@ -104,6 +112,44 @@ class DirectoryTest {
         settle()
         assertEquals(300L, restarted.messenger.positions.value.getValue(a.id).timeSec)
         assertNotNull(restarted.messenger.knownNodes.value.single { it.id == a.id }.position)
+    }
+
+    @Test
+    fun aNodeThatComesIntoRangeLaterStillGetsThePosition() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net)
+        a.messenger.setPositionSharing(PositionSharing.EVERYONE)
+        a.messenger.publishPosition(pos(400)) // nobody around yet
+        settle()
+        net.link(a.id, b.id)
+        runCurrent(); settle()
+        assertEquals(400L, b.messenger.positions.value.getValue(a.id).timeSec)
+    }
+
+    @Test
+    fun theLastPositionIsOfferedAgainEveryMinute() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id); runCurrent()
+        a.messenger.setPositionSharing(PositionSharing.EVERYONE)
+        a.messenger.publishPosition(pos(500)); settle()
+        // b loses what it knew (a fresh phone) while a stands still and gets no new fix
+        val fresh = node(net, b.identity, b.store, b.keys, b.groupStore, InMemoryNodeStore())
+        net.link(a.id, fresh.id)
+        later(61_000)
+        settle()
+        assertEquals(500L, fresh.messenger.positions.value.getValue(a.id).timeSec)
+    }
+
+    @Test
+    fun turningSharingOnSendsTheLastPositionToThoseAlreadyInRange() = runTest {
+        val (a, b, _) = trio()
+        a.messenger.publishPosition(pos(600)) // sharing is still off
+        settle()
+        assertTrue(b.messenger.positions.value.isEmpty())
+        a.messenger.setPositionSharing(PositionSharing.EVERYONE)
+        settle()
+        assertEquals(600L, b.messenger.positions.value.getValue(a.id).timeSec)
     }
 
     // ------------------------------------------------------------ known nodes

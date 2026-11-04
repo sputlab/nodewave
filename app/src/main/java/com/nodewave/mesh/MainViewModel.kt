@@ -7,6 +7,7 @@ import com.nodewave.mesh.crypto.ContactCode
 import android.hardware.usb.UsbManager
 import androidx.lifecycle.viewModelScope
 import com.nodewave.mesh.data.AppSettings
+import com.nodewave.mesh.data.MapDownloader
 import com.nodewave.mesh.protocol.ActivityEvent
 import com.nodewave.mesh.protocol.ChatMessage
 import com.nodewave.mesh.protocol.Conversation
@@ -204,11 +205,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setFavorite(nodeId: String, favorite: Boolean) = messenger.setFavorite(nodeId, favorite)
     fun forgetNode(nodeId: String) = messenger.forgetNode(nodeId)
 
+    // ---- maps
+
+    val mapDownload: StateFlow<MapDownloader.State?> = engine.mapDownloader.state
+    fun startMapDownload(url: String) = engine.mapDownloader.start(url)
+    fun cancelMapDownload() = engine.mapDownloader.cancel()
+
+    /** Stops using the current map file and deletes it (they can be gigabytes). */
+    fun removeMapFile() {
+        val name = engine.settings.settings.value.mapArchive ?: return
+        engine.settings.update { it.copy(mapArchive = null) }
+        engine.scope.launch(kotlinx.coroutines.Dispatchers.IO) { java.io.File(engine.mapsDir, name).delete() }
+    }
+
     // ---- settings and position
 
     /** Sets the name this node announces (empty restores the phone's model); returns the name actually stored. */
     fun setNodeName(raw: String): String {
-        val clean = NodeAdvertisement.cleanName(raw) ?: ""
+        // naming the node after the model is the same as using the model: store nothing then
+        val clean = NodeAdvertisement.cleanName(raw)?.takeIf { it != android.os.Build.MODEL } ?: ""
         engine.settings.update { it.copy(nodeName = clean) }
         return clean.ifEmpty { android.os.Build.MODEL }
     }

@@ -82,6 +82,7 @@ class MeshMessenger(
         private const val ALIAS_MAX = 32
         private const val SIGHTING_INTERVAL_MS = 60_000L
         private const val POSITION_MIN_INTERVAL_MS = 20_000L
+        private const val POSITION_REPEAT_MS = 60_000L
         private const val MAX_SEEN = 1024
         /**
          * A relay forwards a given packet at most once per this window, which stops floods echoing around a loop.
@@ -194,6 +195,7 @@ class MeshMessenger(
         }
         scope.launch { helloLoop() }
         scope.launch { trackSightings() }
+        scope.launch { positionLoop() }
         // Forward secrecy housekeeping: stopping the radio ends every session and wipes its keys.
         scope.launch {
             transport.state.collect {
@@ -622,6 +624,7 @@ class MeshMessenger(
             val now = clock()
             val ids = list.map { it.id }.toSet()
             for (n in list) {
+                if (n.id !in previous) lastOwn?.let { offerPosition(n.id, it) }
                 if (n.id !in previous) note(ActivityEvent.Kind.NODE, "${displayName(n.id, n.name)} is in range" + (n.viaName?.let { " via $it" } ?: ""), n.id)
                 if (now - (lastNoted[n.id] ?: Long.MIN_VALUE / 2) >= SIGHTING_INTERVAL_MS) {
                     lastNoted[n.id] = now
@@ -669,21 +672,38 @@ class MeshMessenger(
     fun setPositionSharing(mode: PositionSharing) {
         _sharing.value = mode
         MeshLog.d("Position sharing: $mode")
+        lastOwn?.let { publishPosition(it) } // nodes already in range get it now, not at the next fix
     }
+
+    /** The newest position we were given, offered again to whoever comes into range and every minute. */
+    @Volatile private var lastOwn: GeoPosition? = null
 
     /**
      * Offers our current [position] to the nodes in range that the sharing mode allows. Best effort: one sealed
      * copy per recipient, no resend, and a recipient gets at most one per [POSITION_MIN_INTERVAL_MS].
      */
     fun publishPosition(position: GeoPosition) {
+        lastOwn = position
+        if (_sharing.value == PositionSharing.OFF) return
+        nodes.value.forEach { offerPosition(it.id, position) }
+    }
+
+    /** Sends [position] to [id] if the sharing mode allows it and the last one went more than the minimum interval ago. */
+    private fun offerPosition(id: String, position: GeoPosition) {
         val mode = _sharing.value
         if (mode == PositionSharing.OFF) return
+        if (mode == PositionSharing.VERIFIED && id !in _verifiedPeers.value) return
         val now = clock()
-        val recipients = nodes.value.map { it.id }.filter { mode == PositionSharing.EVERYONE || it in _verifiedPeers.value }
-        for (id in recipients) {
-            if (now - (lastPositionSent[id] ?: Long.MIN_VALUE / 2) < POSITION_MIN_INTERVAL_MS) continue
-            lastPositionSent[id] = now
-            scope.launch { sealAndDispatch(id, PacketType.POSITION, position.encode(), random.nextInt()) }
+        if (now - (lastPositionSent[id] ?: Long.MIN_VALUE / 2) < POSITION_MIN_INTERVAL_MS) return
+        lastPositionSent[id] = now
+        scope.launch { sealAndDispatch(id, PacketType.POSITION, position.encode(), random.nextInt()) }
+    }
+
+    /** A phone standing still gets no new GPS fix, so the last one is offered again every minute. */
+    private suspend fun positionLoop() {
+        while (true) {
+            delay(POSITION_REPEAT_MS)
+            lastOwn?.let { publishPosition(it) }
         }
     }
 
