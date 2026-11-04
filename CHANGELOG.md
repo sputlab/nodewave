@@ -5,6 +5,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-04
+
+Fixes found on the test phones: the map download crash, a radio that would not start, the diagnostics page, the unread badge.
+
+### Fixed
+- **The app restarted at the end of a map download on Android 10 and 11** (Mi Note 10, Honor View 10): the signature check used `InputStream.readNBytes`, which exists only from Android 13, and the resulting `NoSuchMethodError` killed the process right after the last byte arrived. It now reads the header with a plain `read`. A download whose `.part` is already complete (the finish was cut short) is recognised when the server answers 416 and is kept instead of being fetched again; a `.part` that does not fit the file is still discarded.
+- **The radio did not start on a phone whose BLE advertiser slots were all taken** (the Honor answered `ADVERTISE_FAILED_TOO_MANY_ADVERTISERS`, error 9): the whole start was abandoned. It now retries three times and then runs without advertising (it still scans and can connect to the nodes it hears), and the watchdog keeps trying to advertise every 15 seconds.
+- **The unread badge** on the Chats tab sat off the icon and its text was cut; it is now anchored to the icon's corner with the text centred.
+- **Diagnostics page**: the whole page scrolls, texts and buttons stay on one line on every phone width, and the console is much taller.
+
+### Changed
+- 203 unit tests (new: a complete `.part` is kept on a 416, an invalid one is discarded).
+
 ## [0.8.0] - 2026-11-04
 
 Offline vector maps, positions that reach everyone, a clearer "you" on the map.

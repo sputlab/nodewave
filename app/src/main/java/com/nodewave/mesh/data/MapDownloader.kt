@@ -93,8 +93,15 @@ class MapDownloader(
                 conn.setRequestProperty("User-Agent", "NodeWave")
                 if (have > 0) conn.setRequestProperty("Range", "bytes=$have-")
                 val code = conn.responseCode
-                if (code == 416 && attempt == 0) { // our .part is not valid for this file: start again
-                    part.delete(); attempt++
+                if (code == 416 && have > 0 && attempt == 0) {
+                    // Nothing left to send: the .part is either already the whole file (a finish that was cut short)
+                    // or not valid for this file. Keep it if it checks out, otherwise start again.
+                    attempt++
+                    if (looksComplete(initial.fileName, part)) {
+                        finish(initial, part, dest, have)
+                        return
+                    }
+                    part.delete()
                     continue
                 }
                 if (code != 200 && code != 206) throw IOException("The server answered $code")
@@ -126,22 +133,31 @@ class MapDownloader(
                     }
                 }
                 if (total > 0 && written != total) throw IOException("The connection closed early ($written of $total bytes)")
-                if (MapFiles.kindOf(initial.fileName) == MapFiles.Kind.MAPSFORGE) {
-                    val header = part.inputStream().use { it.readNBytes(32) }
-                    if (!MapFiles.isMapsforge(header)) {
-                        part.delete()
-                        throw IOException("That file is not a Mapsforge map")
-                    }
+                if (!looksComplete(initial.fileName, part)) {
+                    part.delete()
+                    throw IOException("That file is not a Mapsforge map")
                 }
-                dest.delete()
-                if (!part.renameTo(dest)) throw IOException("Could not save the map")
-                _state.update { it?.copy(bytes = written, total = written, running = false, finished = true) }
-                onDone(initial.fileName)
+                finish(initial, part, dest, written)
                 return
             } finally {
                 conn.disconnect()
             }
         }
+    }
+
+    private fun looksComplete(fileName: String, part: File): Boolean {
+        if (MapFiles.kindOf(fileName) != MapFiles.Kind.MAPSFORGE) return true
+        // InputStream.readNBytes needs API 33, and the app runs on Android 10
+        val header = ByteArray(32)
+        val n = part.inputStream().use { it.read(header) }
+        return n > 0 && MapFiles.isMapsforge(header.copyOf(n))
+    }
+
+    private fun finish(initial: State, part: File, dest: File, written: Long) {
+        dest.delete()
+        if (!part.renameTo(dest)) throw IOException("Could not save the map")
+        _state.update { it?.copy(bytes = written, total = written, running = false, finished = true) }
+        onDone(initial.fileName)
     }
 
     private companion object {

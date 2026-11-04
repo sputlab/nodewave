@@ -127,6 +127,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         private const val WATCHDOG_INTERVAL_MS = 15_000L
         /** Advertising is restarted this often, cheaply, in case it died unnoticed. */
         private const val ADV_REFRESH_MS = 240_000L
+        private const val ADV_RETRY_MS = 1_500L
         private const val RESTART_PAUSE_MS = 500L
         private const val RECENT_TRAFFIC_MS = 30_000L
         private const val DESIRED_MTU = 247
@@ -231,7 +232,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             withContext(Dispatchers.IO) {
                 advertisedName = localNodeName
                 openGattServer()
-                startAdvertising(adapter, localNodeName)
+                startAdvertisingOrDegrade(adapter, localNodeName)
                 lastScanResultAt = SystemClock.elapsedRealtime()
                 fruitlessScanRestarts = 0
                 startScanning(adapter)
@@ -270,7 +271,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         runCatching {
             advertiseCallback?.let { bluetoothManager?.adapter?.bluetoothLeAdvertiser?.stopAdvertising(it) }
         }.onFailure { MeshLog.e("stopAdvertising failed", it) }
-        advertiseCallback = null
+        advertiseCallback = null; advertising = false
         runCatching { gattServer?.close() }.onFailure { MeshLog.e("GATT server close failed", it) }
         gattServer = null
         txCharacteristic = null
@@ -411,6 +412,32 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
 
     // ---------------------------------------------------------------- advertising
 
+    private class AdvertisingFailed(val code: Int) : IOException("Advertising failed errorCode=$code")
+
+    /** False while the phone refuses to advertise (a phone whose BLE advertiser slots are taken by other apps). */
+    @Volatile private var advertising = false
+
+    /**
+     * Some phones refuse to advertise for a while: the Honor View 10 answers error 9 (the controller's "connection limit
+     * exceeded") when another phone already holds a link to it, others answer TOO_MANY_ADVERTISERS. Retry briefly, then
+     * carry on without advertising: the phone still scans and can open links to the nodes it hears, and the watchdog
+     * keeps trying to advertise. A phone that cannot advertise at all (unsupported, data too large) is a real failure.
+     */
+    private suspend fun startAdvertisingOrDegrade(adapter: BluetoothAdapter, name: String) {
+        var attempt = 0
+        while (true) {
+            try {
+                startAdvertising(adapter, name)
+                return
+            } catch (e: AdvertisingFailed) {
+                if (e.code == AdvertiseCallback.ADVERTISE_FAILED_FEATURE_UNSUPPORTED || e.code == AdvertiseCallback.ADVERTISE_FAILED_DATA_TOO_LARGE) throw e
+                if (++attempt < 3) { delay(ADV_RETRY_MS); continue }
+                MeshLog.e("Advertising refused (error ${e.code}): running without advertising, other nodes will not see this phone until it works again")
+                return
+            }
+        }
+    }
+
     private suspend fun startAdvertising(adapter: BluetoothAdapter, localNodeName: String) {
         val advertiser = adapter.bluetoothLeAdvertiser
             ?: throw IllegalStateException("BLE advertising not supported on this device")
@@ -418,6 +445,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         val callback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
                 MeshLog.d("Advertising started")
+                advertising = true
                 started.complete(0)
             }
 
@@ -461,7 +489,8 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             ?: throw IOException("Timeout starting advertising")
         if (error != 0) {
             advertiseCallback = null
-            throw IOException("Advertising failed errorCode=$error")
+            advertising = false
+            throw AdvertisingFailed(error)
         }
     }
 
@@ -844,6 +873,14 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
                         }
                     }
                 }
+                if (!advertising && _state.value == TransportState.ACTIVE) {
+                    lifecycleMutex.withLock {
+                        if (_state.value == TransportState.ACTIVE && !advertising) {
+                            MeshLog.d("WATCHDOG: not advertising, trying again")
+                            runCatching { restartAdvertising() }.onFailure { MeshLog.e("Advertising retry failed: ${it.message}") }
+                        }
+                    }
+                }
                 if (now - lastAdvRefresh >= ADV_REFRESH_MS) {
                     lastAdvRefresh = now
                     lifecycleMutex.withLock {
@@ -869,12 +906,12 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         serverLinks.clear()
         scanJob?.cancel(); scanJob = null
         advertiseCallback?.let { runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(it) } }
-        advertiseCallback = null
+        advertiseCallback = null; advertising = false
         runCatching { gattServer?.close() }
         gattServer = null
         delay(RESTART_PAUSE_MS * 2)
         openGattServer()
-        startAdvertising(adapter, advertisedName)
+        startAdvertisingOrDegrade(adapter, advertisedName)
         startScanJob(adapter)
     }
 
@@ -882,6 +919,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         val adapter = bluetoothManager?.adapter ?: return
         advertiseCallback?.let { runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(it) } }
         advertiseCallback = null
+        advertising = false
         delay(RESTART_PAUSE_MS)
         startAdvertising(adapter, advertisedName)
     }

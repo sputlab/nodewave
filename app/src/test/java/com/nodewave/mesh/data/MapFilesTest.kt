@@ -68,6 +68,7 @@ class MapFilesTest {
             lastRange = range
             if (range != null && range.startsWith("bytes=")) {
                 val from = range.removePrefix("bytes=").removeSuffix("-").toInt()
+                if (from >= data.size) { ex.sendResponseHeaders(416, -1); ex.close(); return@createContext }
                 ex.sendResponseHeaders(206, (data.size - from).toLong())
                 ex.responseBody.use { it.write(data, from, data.size - from); served += data.size - from }
             } else {
@@ -109,6 +110,27 @@ class MapFilesTest {
         assertTrue(state.error ?: "", state.finished)
         assertEquals("bytes=$half-", lastRange)
         assertEquals(content.size - half, served)
+        assertTrue(content.contentEquals(File(dir, "test.map").readBytes()))
+    }
+
+    @Test
+    fun aPartThatIsAlreadyCompleteIsKeptNotDownloadedAgain() {
+        // the finish of an earlier run was cut short: the server has nothing more to send (416)
+        File(dir, "test.map.part").writeBytes(content)
+        served = 0
+        val done = mutableListOf<String>()
+        val state = runDownload("test.map", done)
+        assertTrue(state.error ?: "", state.finished)
+        assertEquals(0, served)
+        assertEquals(listOf("test.map"), done)
+        assertTrue(content.contentEquals(File(dir, "test.map").readBytes()))
+    }
+
+    @Test
+    fun aPartThatIsNotValidForTheFileIsDiscardedOnA416() {
+        File(dir, "test.map.part").writeBytes("garbage".repeat(100_000).toByteArray()) // longer than the file
+        val state = runDownload("test.map")
+        assertTrue(state.error ?: "", state.finished)
         assertTrue(content.contentEquals(File(dir, "test.map").readBytes()))
     }
 

@@ -17,6 +17,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -89,6 +93,15 @@ class MainActivity : ComponentActivity() {
 
 internal val Mono = FontFamily.Monospace
 
+/** Text that stays on one line: an ellipsis instead of wrapping, so buttons keep their size on every phone. */
+@Composable
+internal fun OneLine(text: String, color: Color = TacticalDim, size: Int = 12, bold: Boolean = false, modifier: Modifier = Modifier) {
+    Text(
+        text, color = color, fontFamily = Mono, fontSize = size.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+        maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = modifier
+    )
+}
+
 @Composable
 internal fun DiagnosticsScreen(vm: MainViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -128,10 +141,13 @@ internal fun DiagnosticsScreen(vm: MainViewModel, onBack: () -> Unit) {
 
     val active = state == TransportState.ACTIVE || state == TransportState.STARTING
 
+    // The whole page scrolls; every block has a fixed height (its own list scrolls inside), so nothing is squeezed.
+    val tabHeight = (LocalConfiguration.current.screenHeightDp - 170).coerceAtLeast(320).dp
     Column(
         modifier = Modifier
             .fillMaxSize()
             .systemBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -156,22 +172,23 @@ internal fun DiagnosticsScreen(vm: MainViewModel, onBack: () -> Unit) {
             listOf("RADIO", "CONTACTS", "GROUPS", "BENCH").forEachIndexed { i, label ->
                 OutlinedButton(
                     onClick = { tab = i }, modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 2.dp),
                     border = BorderStroke(if (tab == i) 2.dp else 1.dp, if (tab == i) TacticalGreen else TacticalDim)
-                ) { Text(label, color = if (tab == i) TacticalGreen else TacticalDim, fontFamily = Mono, fontSize = 11.sp) }
+                ) { OneLine(label, if (tab == i) TacticalGreen else TacticalDim, 11) }
             }
         }
         when (tab) {
-            1 -> ContactsTab(vm, nodes, verified, Modifier.weight(1f))
-            3 -> BenchTab(vm, nodes, benchResults, benchBusy, benchRepeatPeer, state == TransportState.ACTIVE, Modifier.weight(1f))
-            2 -> GroupsTab(vm, groups, nodes, allMessages, selectedGroupId, state == TransportState.ACTIVE, Modifier.weight(1f))
+            1 -> ContactsTab(vm, nodes, verified, Modifier.height(tabHeight))
+            3 -> BenchTab(vm, nodes, benchResults, benchBusy, benchRepeatPeer, state == TransportState.ACTIVE, Modifier.height(tabHeight))
+            2 -> GroupsTab(vm, groups, nodes, allMessages, selectedGroupId, state == TransportState.ACTIVE, Modifier.height(tabHeight))
             else -> {
-            Panel(title = "NODES (${nodes.size})", modifier = Modifier.weight(1.4f)) {
+            Panel(title = "NODES (${nodes.size})", modifier = Modifier.height(300.dp)) {
                 Button(
                     onClick = vm::broadcastPing,
                     enabled = nodes.isNotEmpty() && state == TransportState.ACTIVE,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = TacticalAmber)
-                ) { Text("BROADCAST TO ALL (CIAO - 73)", fontFamily = Mono, fontWeight = FontWeight.Bold) }
+                ) { OneLine("BROADCAST TO ALL", Color.Black, 12, bold = true) }
                 if (nodes.isEmpty()) {
                     Text("No nodes in range…", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
                 }
@@ -195,10 +212,10 @@ internal fun DiagnosticsScreen(vm: MainViewModel, onBack: () -> Unit) {
 
             Panel(
                 title = "CHAT (${messages.size})",
-                modifier = Modifier.weight(1.3f),
+                modifier = Modifier.height(300.dp),
                 action = {
                     TextButton(onClick = vm::clearHistory, enabled = messages.isNotEmpty(), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        Text("CLEAR", color = TacticalDim, fontFamily = Mono, fontSize = 11.sp)
+                        OneLine("CLEAR", TacticalDim, 11)
                     }
                 }
             ) {
@@ -218,13 +235,10 @@ internal fun DiagnosticsScreen(vm: MainViewModel, onBack: () -> Unit) {
             }
 
             Panel(
-                title = "CONSOLE MESH_RADIO",
-                modifier = Modifier.weight(0.8f),
+                title = "CONSOLE",
+                modifier = Modifier.height((LocalConfiguration.current.screenHeightDp * 0.85f).dp.coerceAtLeast(480.dp)),
                 action = {
-                    Text(
-                        "DEBUG: skip direct link",
-                        color = if (ignoreDirect) TacticalAmber else TacticalDim, fontFamily = Mono, fontSize = 10.sp
-                    )
+                    OneLine("SKIP DIRECT", if (ignoreDirect) TacticalAmber else TacticalDim, 10)
                     Switch(
                         checked = ignoreDirect, onCheckedChange = vm::setIgnoreDirect,
                         modifier = Modifier.scale(0.7f)
@@ -258,11 +272,9 @@ private fun Header(nodeName: String, nodeId: String, state: TransportState, acti
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("NODEWAVE // $nodeName", color = TacticalGreen, fontFamily = Mono,
-                fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            OneLine("NODEWAVE // $nodeName", TacticalGreen, 16, bold = true)
             Text(nodeId.chunked(4).joinToString(" "), color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
-            Text("STATE: $state", fontFamily = Mono, fontSize = 12.sp,
-                color = when (state) {
+            OneLine("STATE: $state", size = 12, color = when (state) {
                     TransportState.ACTIVE -> TacticalGreen
                     TransportState.IDLE, TransportState.STARTING -> TacticalAmber
                     else -> TacticalRed
@@ -274,7 +286,7 @@ private fun Header(nodeName: String, nodeId: String, state: TransportState, acti
                 containerColor = if (active) TacticalRed else TacticalGreen,
                 contentColor = Color.Black
             )
-        ) { Text(if (active) "STOP RADIO" else "START RADIO", fontFamily = Mono, fontWeight = FontWeight.Bold) }
+        ) { OneLine(if (active) "STOP" else "START", Color.Black, 14, bold = true) }
     }
 }
 
@@ -290,8 +302,8 @@ private fun PeerRow(node: NodeEntry, selected: Boolean, keyed: Boolean, verified
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(node.name, color = Color.White, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Text(node.id.chunked(4).joinToString(" "), color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
+            OneLine(node.name, Color.White, 13, bold = true)
+            OneLine(node.id.chunked(4).joinToString(" "), TacticalDim, 10)
             Row {
                 if (node.isDirect) {
                     Text(node.rssi?.let { "$it dBm" } ?: "-- dBm", color = TacticalAmber, fontFamily = Mono, fontSize = 12.sp)
@@ -302,8 +314,8 @@ private fun PeerRow(node: NodeEntry, selected: Boolean, keyed: Boolean, verified
                 if (verified) Text("  VERIFIED", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
-        OutlinedButton(onClick = onPing, enabled = enabled, border = BorderStroke(1.dp, TacticalGreen)) {
-            Text("PING (CIAO - 73)", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
+        OutlinedButton(onClick = onPing, enabled = enabled, border = BorderStroke(1.dp, TacticalGreen), contentPadding = PaddingValues(horizontal = 12.dp)) {
+            OneLine("PING", TacticalGreen, 11)
         }
     }
 }
@@ -357,13 +369,13 @@ private fun ChatInput(targetName: String?, enabled: Boolean, onSend: (String) ->
             onClick = ::send,
             enabled = enabled && targetName != null && text.isNotBlank(),
             contentPadding = PaddingValues(horizontal = 10.dp)
-        ) { Text("SEND", fontFamily = Mono, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+        ) { OneLine("SEND", Color.Black, 11, bold = true) }
         OutlinedButton(
             onClick = { onBroadcast(text); text = "" },
             enabled = enabled && text.isNotBlank(),
             border = BorderStroke(1.dp, TacticalAmber),
             contentPadding = PaddingValues(horizontal = 10.dp)
-        ) { Text("ALL", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
+        ) { OneLine("ALL", TacticalAmber, 11) }
     }
 }
 

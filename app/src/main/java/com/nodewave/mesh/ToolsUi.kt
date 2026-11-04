@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nodewave.mesh.protocol.ChatMessage
@@ -66,7 +67,7 @@ internal fun ContactsTab(vm: MainViewModel, nodes: List<NodeEntry>, verified: Se
         }
         Panel(title = "VERIFY A CONTACT") {
             Button(onClick = { result = null; scanning = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("SCAN CONTACT CODE", fontFamily = Mono, fontWeight = FontWeight.Bold)
+                OneLine("SCAN CONTACT CODE", Color.Black, 13, bold = true)
             }
             result?.let { Text(it, color = if (it.startsWith("Verified")) TacticalGreen else TacticalRed, fontFamily = Mono, fontSize = 12.sp) }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -104,7 +105,7 @@ internal fun GroupsTab(
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Panel(title = "GROUPS (${groups.size})", action = {
-            TextButton(onClick = { creating = true }, enabled = nodes.isNotEmpty()) { Text("NEW", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
+            TextButton(onClick = { creating = true }, enabled = nodes.isNotEmpty()) { OneLine("NEW", TacticalAmber, 11) }
         }) {
             if (groups.isEmpty()) Text("No groups yet.", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -121,12 +122,12 @@ internal fun GroupsTab(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             if (g.state == GroupState.INVITED) {
-                                Button(onClick = { vm.acceptInvite(g.id) }) { Text("ACCEPT", fontFamily = Mono, fontSize = 11.sp) }
-                                OutlinedButton(onClick = { vm.leaveGroup(g.id) }, border = BorderStroke(1.dp, TacticalRed)) { Text("DECLINE", color = TacticalRed, fontFamily = Mono, fontSize = 11.sp) }
+                                Button(onClick = { vm.acceptInvite(g.id) }, contentPadding = PaddingValues(horizontal = 8.dp)) { OneLine("ACCEPT", Color.Black, 11) }
+                                OutlinedButton(onClick = { vm.leaveGroup(g.id) }, border = BorderStroke(1.dp, TacticalRed), contentPadding = PaddingValues(horizontal = 8.dp)) { OneLine("DECLINE", TacticalRed, 11) }
                             } else {
-                                OutlinedButton(onClick = { vm.selectGroup(g.id) }, border = BorderStroke(1.dp, TacticalGreen)) { Text("OPEN", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp) }
-                                if (admin) OutlinedButton(onClick = { editing = g }, border = BorderStroke(1.dp, TacticalAmber)) { Text("MEMBERS", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
-                                OutlinedButton(onClick = { vm.leaveGroup(g.id) }, border = BorderStroke(1.dp, TacticalRed)) { Text("LEAVE", color = TacticalRed, fontFamily = Mono, fontSize = 11.sp) }
+                                OutlinedButton(onClick = { vm.selectGroup(g.id) }, border = BorderStroke(1.dp, TacticalGreen), contentPadding = PaddingValues(horizontal = 8.dp)) { OneLine("OPEN", TacticalGreen, 11) }
+                                if (admin) OutlinedButton(onClick = { editing = g }, border = BorderStroke(1.dp, TacticalAmber), contentPadding = PaddingValues(horizontal = 8.dp)) { OneLine("MEMBERS", TacticalAmber, 11) }
+                                OutlinedButton(onClick = { vm.leaveGroup(g.id) }, border = BorderStroke(1.dp, TacticalRed), contentPadding = PaddingValues(horizontal = 8.dp)) { OneLine("LEAVE", TacticalRed, 11) }
                             }
                         }
                     }
@@ -161,7 +162,7 @@ internal fun GroupsTab(
                         placeholder = { Text("To ${selected.name}…", fontFamily = Mono, fontSize = 12.sp) }
                     )
                     Button(onClick = { if (vm.sendGroupText(selected.id, text)) text = "" }, enabled = enabled && text.isNotBlank()) {
-                        Text("SEND", fontFamily = Mono, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        OneLine("SEND", Color.Black, 11, bold = true)
                     }
                 }
             }
@@ -251,7 +252,7 @@ internal fun BenchTab(
                     Text("repeat", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
                     Switch(checked = repeatPeer == n.id, onCheckedChange = { on -> vm.setBenchRepeat(if (on) n.id else null) }, enabled = enabled)
                     OutlinedButton(onClick = { vm.runBench(n.id) }, enabled = enabled && !busy, border = BorderStroke(1.dp, TacticalGreen)) {
-                        Text(if (busy) "…" else "RUN", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
+                        OneLine(if (busy) "…" else "RUN", TacticalGreen, 11)
                     }
                 }
             }

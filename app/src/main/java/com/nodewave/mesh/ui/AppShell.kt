@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -182,8 +184,24 @@ private fun BottomBar(selected: Int, unread: Int, onSelect: (Int) -> Unit) {
                 Box {
                     TabGlyph(tab.icon, color)
                     if (tab == Tab.CHATS && unread > 0) {
-                        Box(Modifier.align(Alignment.TopEnd).size(width = 16.dp, height = 12.dp).background(TacticalAmber, CircleShape), contentAlignment = Alignment.Center) {
-                            Text(if (unread > 9) "9+" else "$unread", color = Color.Black, fontFamily = Mono, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        // sits on the icon's upper right corner; the text is centred without the font's extra padding
+                        Box(
+                            Modifier.align(Alignment.TopEnd).offset(x = 9.dp, y = (-1).dp).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                .background(TacticalAmber, CircleShape).padding(horizontal = 3.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (unread > 9) "9+" else "$unread", color = Color.Black, fontFamily = Mono, fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                                maxLines = 1, softWrap = false,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    lineHeight = 9.sp,
+                                    platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                                    lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+                                        androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center,
+                                        androidx.compose.ui.text.style.LineHeightStyle.Trim.Both
+                                    )
+                                )
+                            )
                         }
                     }
                 }
