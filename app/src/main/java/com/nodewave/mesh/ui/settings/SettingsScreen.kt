@@ -93,9 +93,20 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
             TacPanel(title = "Identity") {
-                Text(vm.localNodeName, color = TacticalText, fontFamily = Sans, fontSize = 16.sp)
+                val current by vm.nodeName.collectAsStateWithLifecycle()
+                var draft by remember(current) { mutableStateOf(if (s.nodeName.isBlank()) "" else current) }
+                val bytes = draft.toByteArray(Charsets.UTF_8).size
                 Text(groupedId(vm.localNodeId), color = TacticalDim, fontFamily = Mono, fontSize = 11.sp)
-                Text("The node name is the phone's model. Your ID comes from a key that never leaves the phone.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                TacTextField(
+                    draft, { v -> var t = v; while (t.toByteArray(Charsets.UTF_8).size > com.nodewave.mesh.protocol.NodeAdvertisement.MAX_NAME_BYTES) t = t.dropLast(1); draft = t },
+                    Modifier.fillMaxWidth(), label = "Node name", placeholder = android.os.Build.MODEL
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    TacButton("Save", { vm.setNodeName(draft) }, kind = TacKind.PRIMARY, small = true, enabled = draft.trim() != (if (s.nodeName.isBlank()) "" else current))
+                    TacButton("Use model", { vm.setNodeName(""); draft = "" }, small = true, enabled = s.nodeName.isNotBlank())
+                    Text("$bytes / ${com.nodewave.mesh.protocol.NodeAdvertisement.MAX_NAME_BYTES} bytes", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                }
+                Text("Announced to nearby nodes as the label of your ID, and put in your contact code. The ID itself never changes: it comes from a key that never leaves this phone. Others update it the next time they see you.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
             }
         }
         item {

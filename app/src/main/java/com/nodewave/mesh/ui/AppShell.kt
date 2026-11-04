@@ -79,6 +79,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     val context = LocalContext.current
     val state by vm.transportState.collectAsStateWithLifecycle()
     val unread by vm.unreadTotal.collectAsStateWithLifecycle()
+    val nodeName by vm.nodeName.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var chatKey by rememberSaveable { mutableStateOf<String?>(null) }
     var mapFocus by rememberSaveable { mutableStateOf<String?>(null) }
@@ -106,7 +107,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     BackHandler(enabled = diagnostics) { diagnostics = false }
     Box(Modifier.fillMaxSize().background(TacticalBackground)) {
         Column(Modifier.fillMaxSize()) {
-            TopBar(vm.localNodeName, state, active, toggleRadio)
+            TopBar(nodeName, state, active, toggleRadio)
             Box(Modifier.weight(1f).clipToBounds()) {
                 AnimatedContent(
                     targetState = tab,

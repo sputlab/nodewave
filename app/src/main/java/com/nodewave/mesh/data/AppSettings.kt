@@ -32,6 +32,8 @@ data class LoraSettings(
 enum class LoraMode { TRANSPARENT, FIXED, WOR }
 
 data class AppSettings(
+    /** The name this node announces; empty means the phone's model. */
+    val nodeName: String = "",
     val radio: RadioSettings = RadioSettings(),
     val positionSharing: PositionSharing = PositionSharing.OFF,
     /** Coordinates entered by hand, for a station that does not move; shared every minute instead of the GPS fix. */
@@ -72,6 +74,7 @@ class SettingsStore(context: Context) {
         val d = AppSettings()
         val fixed = if (prefs.contains("fix_lat")) GeoPosition(prefs.getInt("fix_lat", 0), prefs.getInt("fix_lon", 0), 0, 0) else null
         return AppSettings(
+            nodeName = prefs.getString("node_name", "") ?: "",
             radio = RadioSettings(
                 scan = enumOf("scan", d.radio.scan, ScanProfile.entries.toTypedArray()),
                 advertise = enumOf("adv", d.radio.advertise, AdvertiseProfile.entries.toTypedArray()),
@@ -94,6 +97,7 @@ class SettingsStore(context: Context) {
 
     private fun save(s: AppSettings) {
         prefs.edit().apply {
+            putString("node_name", s.nodeName)
             putString("scan", s.radio.scan.name); putString("adv", s.radio.advertise.name); putString("power", s.radio.power.name)
             putString("sharing", s.positionSharing.name)
             s.fixedPosition?.let { putInt("fix_lat", it.latE7); putInt("fix_lon", it.lonE7) } ?: run { remove("fix_lat"); remove("fix_lon") }

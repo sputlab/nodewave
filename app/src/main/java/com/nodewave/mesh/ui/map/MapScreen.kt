@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.drawable.GradientDrawable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -223,6 +224,12 @@ fun MapScreen(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: () -> Un
             }
             message?.let { Text(it, color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp, modifier = Modifier.padding(4.dp)) }
             progress?.let { Text(it, color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp, modifier = Modifier.padding(4.dp)) }
+        }
+        if (hasSource) {
+            Text(
+                "© OpenStreetMap contributors", color = TacticalText, fontFamily = Sans, fontSize = 10.sp,
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).background(TacticalSurface.copy(alpha = 0.75f)).padding(horizontal = 5.dp, vertical = 2.dp)
+            )
         }
         Column(Modifier.align(Alignment.BottomEnd).padding(10.dp), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             TacButton("Fit nodes", {

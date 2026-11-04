@@ -179,6 +179,16 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
 
     @Volatile override var radioSettings: RadioSettings = RadioSettings()
 
+    override suspend fun renameNode(name: String) {
+        advertisedName = name
+        lifecycleMutex.withLock {
+            if (_state.value == TransportState.ACTIVE) {
+                MeshLog.d("Node renamed to '$name', refreshing the advertisement")
+                runCatching { restartAdvertising() }.onFailure { MeshLog.e("Advertising refresh failed", it) }
+            }
+        }
+    }
+
     override suspend fun applyRadioSettings() {
         lifecycleMutex.withLock {
             if (_state.value == TransportState.ACTIVE) {

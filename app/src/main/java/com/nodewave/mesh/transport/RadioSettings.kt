@@ -21,4 +21,7 @@ interface RadioControl {
 
     /** Restarts scanning and advertising so a changed [radioSettings] takes effect; a no-op while the radio is off. */
     suspend fun applyRadioSettings()
+
+    /** Announces the node under a new name from now on. */
+    suspend fun renameNode(name: String)
 }

@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 ## [Unreleased]
 
 ### Added
+- **Editable node name** (Settings, Identity): the name becomes a label of the unchanged ID, announced over BLE (up to 19 bytes, cleaned of control characters and never cut inside a character), shown in the top bar, used in the contact code, and applied at once by refreshing the advertisement. Empty restores the phone's model.
+- Map attribution "© OpenStreetMap contributors" whenever a map source is set.
 - **New interface**, tactical and modern: five screens behind a bottom bar, an animated radar, glow and corner-bracket panels, hexagonal node avatars, signal bars.
   - **CHATS**: conversation list with unread counts and group invitations; personal and group conversations as bubbles with delivery state; creating and managing groups (members, admin, leave).
   - **NETWORK**: radar of the nodes around you (closer = stronger signal), live counters (in range, via relay, encrypted, sent, received, delivered, relayed) and a feed of what happens on the mesh.

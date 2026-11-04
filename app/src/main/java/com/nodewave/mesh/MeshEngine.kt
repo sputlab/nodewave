@@ -37,7 +37,8 @@ class MeshEngine(app: Application) {
 
     private val cipher = KeystoreCipher()
     val identity = IdentityProvider.getOrCreate(PrefsIdentityStore(app, cipher))
-    val localNodeName: String = Build.MODEL
+    /** The name chosen in the settings, or the phone's model. */
+    val localNodeName: String get() = settings.settings.value.nodeName.ifBlank { Build.MODEL }
 
     private val ble = BleTransport(app, identity.nodeId)
     val transport: MeshTransport = ble
@@ -68,6 +69,9 @@ class MeshEngine(app: Application) {
                     radio.applyRadioSettings()
                 }
             }
+        }
+        scope.launch {
+            settings.settings.map { it.nodeName }.distinctUntilChanged().collect { radio.renameNode(localNodeName) }
         }
         scope.launch { settings.settings.map { it.positionSharing }.distinctUntilChanged().collect { messenger.setPositionSharing(it) } }
         // A station that does not move offers its hand-entered position every minute, screen on or off.

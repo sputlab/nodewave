@@ -13,10 +13,12 @@ import com.nodewave.mesh.protocol.Conversation
 import com.nodewave.mesh.protocol.GeoPosition
 import com.nodewave.mesh.protocol.KnownNode
 import com.nodewave.mesh.protocol.MeshStats
+import com.nodewave.mesh.protocol.NodeAdvertisement
 import com.nodewave.mesh.protocol.PacketType
 import com.nodewave.mesh.protocol.conversations
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import com.nodewave.mesh.protocol.Group
 import com.nodewave.mesh.protocol.MeshMessenger
@@ -39,7 +41,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val messenger = engine.messenger
 
     val localNodeId: String = engine.identity.nodeId
-    val localNodeName: String = engine.localNodeName
+    val nodeName: StateFlow<String> = engine.settings.settings.map { it.nodeName.ifBlank { android.os.Build.MODEL } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, engine.localNodeName)
+    val localNodeName: String get() = nodeName.value
 
     val transportState: StateFlow<TransportState> = engine.transport.state
     val nodes: StateFlow<List<NodeEntry>> = messenger.nodes
@@ -201,6 +205,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun forgetNode(nodeId: String) = messenger.forgetNode(nodeId)
 
     // ---- settings and position
+
+    /** Sets the name this node announces (empty restores the phone's model); returns the name actually stored. */
+    fun setNodeName(raw: String): String {
+        val clean = NodeAdvertisement.cleanName(raw) ?: ""
+        engine.settings.update { it.copy(nodeName = clean) }
+        return clean.ifEmpty { android.os.Build.MODEL }
+    }
 
     fun updateSettings(change: (AppSettings) -> AppSettings) = engine.settings.update(change)
     fun hasLocationPermission() = engine.positionTracker.hasPermission()
