@@ -155,7 +155,8 @@ internal fun VoiceBubble(vm: MainViewModel, m: ChatMessage, statusText: String?,
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start) {
         Column(
             Modifier.widthIn(max = 300.dp).background(if (outgoing) TacticalGreen.copy(alpha = 0.13f) else TacticalSurfaceHigh, shape)
-                .border(1.dp, if (outgoing) TacticalGreen.copy(alpha = 0.45f) else TacticalLine, shape).padding(horizontal = 12.dp, vertical = 8.dp)
+                .border(1.dp, if (outgoing) TacticalGreen.copy(alpha = 0.45f) else TacticalLine, shape)
+                .clickable(enabled = outgoing && m.status == MessageStatus.FAILED) { vm.retryBlob(m.key) }.padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(
@@ -182,7 +183,8 @@ internal fun VoiceBubble(vm: MainViewModel, m: ChatMessage, statusText: String?,
                 val label = listOfNotNull(
                     statusText?.takeIf { it.isNotEmpty() },
                     progress?.let { "${(it * 100).toInt()}%" },
-                    m.note
+                    m.note,
+                    if (outgoing && m.status == MessageStatus.FAILED) "tap to retry" else null
                 ).joinToString(" · ")
                 if (label.isNotEmpty()) Text(label, color = statusColor, fontFamily = Mono, fontSize = 9.sp)
                 Text(clock(m.time), color = TacticalDim, fontFamily = Mono, fontSize = 9.sp)
@@ -291,7 +293,8 @@ internal fun ImageBubble(vm: MainViewModel, m: ChatMessage, statusText: String?,
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start) {
         Column(
             Modifier.widthIn(max = 260.dp).background(if (outgoing) TacticalGreen.copy(alpha = 0.13f) else TacticalSurfaceHigh, shape)
-                .border(1.dp, if (outgoing) TacticalGreen.copy(alpha = 0.45f) else TacticalLine, shape).padding(6.dp)
+                .border(1.dp, if (outgoing) TacticalGreen.copy(alpha = 0.45f) else TacticalLine, shape)
+                .clickable(enabled = outgoing && m.status == MessageStatus.FAILED) { vm.retryBlob(m.key) }.padding(6.dp)
         ) {
             val img = image
             if (img != null) androidx.compose.foundation.Image(img, "Photo", Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { full = true }, contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
@@ -302,7 +305,7 @@ internal fun ImageBubble(vm: MainViewModel, m: ChatMessage, statusText: String?,
                 Box(Modifier.fillMaxWidth(progress.coerceIn(0.02f, 1f)).height(4.dp).background(TacticalAmber, RoundedCornerShape(2.dp)))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                val label = listOfNotNull(statusText?.takeIf { it.isNotEmpty() }, progress?.let { "${(it * 100).toInt()}%" }, m.note).joinToString(" · ")
+                val label = listOfNotNull(statusText?.takeIf { it.isNotEmpty() }, progress?.let { "${(it * 100).toInt()}%" }, m.note, if (outgoing && m.status == MessageStatus.FAILED) "tap to retry" else null).joinToString(" · ")
                 if (label.isNotEmpty()) Text(label, color = statusColor, fontFamily = Mono, fontSize = 9.sp)
                 Text(clock(m.time), color = TacticalDim, fontFamily = Mono, fontSize = 9.sp)
             }

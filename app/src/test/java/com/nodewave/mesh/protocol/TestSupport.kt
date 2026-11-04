@@ -104,6 +104,9 @@ internal class FakeNetwork(private val clock: () -> Long = { 0L }) {
         @Volatile var busy = false
         var lowPrioritySends = 0
 
+        /** The next this-many sends of DATA packets fail as a busy radio would. */
+        @Volatile var failNextDataSends = 0
+
         fun see(other: String) {
             peers.value = (peers.value.filterNot { it.id == other } + PeerNode(other, "peer-${other.takeLast(4)}", -50))
                 .sortedBy { it.id }
@@ -120,6 +123,7 @@ internal class FakeNetwork(private val clock: () -> Long = { 0L }) {
 
         override suspend fun send(targetPeerId: String, payload: ByteArray, options: SendOptions): Result<Unit> {
             if (busy && options.lowPriority) return Result.failure(TransportBusyException())
+            if (failNextDataSends > 0 && Packet.decode(payload)?.type == PacketType.DATA) { failNextDataSends--; return Result.failure(java.io.IOException("radio timeout")) }
             val now = clock()
             sent += Sent(id, targetPeerId, options, Packet.decode(payload))
 

@@ -117,7 +117,9 @@ class MeshMessenger(
         private const val LINK_TIMEOUT_MS = 30_000L
         /** After sending the chunks still missing, wait this long for the receiver's bitmap before sending again. */
         private const val ACK_WAIT_MS = 8_000L
-        private const val MAX_IDLE_ROUNDS = 4
+        private const val MAX_IDLE_ROUNDS = 6
+        private const val CHUNK_RETRIES = 3
+        private const val CHUNK_RETRY_DELAY_MS = 300L
         private const val IDLE_ACK_MS = 2_500L
         private const val ACK_MIN_INTERVAL_MS = 1_500L
     }
@@ -1062,6 +1064,25 @@ class MeshMessenger(
         return startBlob(peerId, MessageKind.IMAGE, IMAGE_JPEG, 0, jpeg, link)
     }
 
+    /** Sends a failed clip or photo again, with a new transfer id and chunks cut for the link as it is now. */
+    fun retryBlob(key: String): Boolean {
+        val m = _messages.value.firstOrNull { it.key == key && it.outgoing && it.status == MessageStatus.FAILED && it.kind != MessageKind.TEXT } ?: return false
+        val blobId = m.blobId ?: return false
+        if (outgoing.values.any { it.destId == m.peerId && it.transferId == m.messageId }) return false
+        scope.launch {
+            val bytes = runCatching { blobStore.get(blobId) }.getOrNull()
+            if (bytes == null) { setNote(key, "The file is gone"); return@launch }
+            val link = pathClass(m.peerId)
+            val kind = if (m.kind == MessageKind.IMAGE) BlobKind.IMAGE else BlobKind.VOICE
+            if (bytes.size > BlobPolicy.maxBytes(kind, link)) { setNote(key, "Too big for the link as it is now"); return@launch }
+            val fresh = m.copy(messageId = random.nextInt(), status = MessageStatus.SENDING, note = null, time = clock())
+            _messages.update { list -> list.map { if (it.key == key) fresh else it } }
+            persist(fresh)
+            runTransfer(fresh, link, bytes)
+        }
+        return true
+    }
+
     private fun startBlob(peerId: String, kind: MessageKind, codec: Int, durationMs: Int, bytes: ByteArray, link: LinkClass): SendBlobResult {
         val transferId = random.nextInt()
         val blobId = UUID.randomUUID().toString()
@@ -1101,7 +1122,13 @@ class MeshMessenger(
                     if (out.acked[i]) continue
                     if (out.done.isCompleted) break
                     val plain = DataFrame.encode(DataFrame.Chunk(blobKind, message.codec, message.durationMs, out.transferId, i, total, chunks[i]))
-                    val r = sealAndDispatchData(dest, plain, out.chunkIds[i], need) ?: return fail("No secure session")
+                    var r = sealAndDispatchData(dest, plain, out.chunkIds[i], need) ?: return fail("No secure session")
+                    // a radio that was busy or timed out for a moment: try the same chunk again before moving on
+                    var tries = 0
+                    while (r.isFailure && r.exceptionOrNull() !is LinkTooSlowException && tries < CHUNK_RETRIES && !out.done.isCompleted) {
+                        delay(CHUNK_RETRY_DELAY_MS * (++tries))
+                        r = sealAndDispatchData(dest, plain, out.chunkIds[i], need) ?: return fail("No secure session")
+                    }
                     if (r.exceptionOrNull() is LinkTooSlowException) out.done.complete(Outcome.Refused(need))
                 }
                 if (firstPass) {
@@ -1121,8 +1148,8 @@ class MeshMessenger(
                 }
                 progress()
                 if (out.acked.cardinality() > before) idleRounds = 0
-                else if (++idleRounds > MAX_IDLE_ROUNDS) return fail("No answer")
-                MeshLog.d("Clip to ${nameOf(dest)}: ${out.acked.cardinality()}/$total chunks acknowledged, sending the rest again")
+                else if (++idleRounds > MAX_IDLE_ROUNDS) return fail("No answer from ${nameOf(dest)} (${out.acked.cardinality()}/$total chunks got through)")
+                MeshLog.d("Transfer to ${nameOf(dest)}: ${out.acked.cardinality()}/$total chunks acknowledged, sending the rest again (round idle=$idleRounds)")
             }
         } finally {
             outgoing.remove(out.transferId)
@@ -1153,6 +1180,7 @@ class MeshMessenger(
         val inner = Packet(packet.type, packet.senderId, packet.destId, packet.messageId, DataFrame.sealedPart(packet.payload), packet.ttl, packet.hops)
         val (_, plain) = open(inner, byteArrayOf(need.code.toByte())) ?: return
         val chunk = DataFrame.decode(plain) ?: return
+        if (chunk.index % 16 == 0) MeshLog.d("DATA chunk ${chunk.index + 1}/${chunk.total} from ${nameOf(packet.senderId)} (${packet.payload.size} B)")
         if (BlobPolicy.needClass(chunk.kind, chunk.codec) != need) {
             MeshLog.e("DATA from ${nameOf(packet.senderId)} dropped: class byte does not fit its content")
             return
@@ -1223,6 +1251,7 @@ class MeshMessenger(
         val out = outgoing[ack.transferId]?.takeIf { it.destId == packet.senderId } ?: return
         noteLink(packet, linkId)
         if (ack.complete) out.acked.set(0, out.total) else out.acked.or(ack.received.get(0, out.total))
+        MeshLog.d("DATA_ACK from ${nameOf(packet.senderId)}: ${out.acked.cardinality()}/${out.total} chunks acknowledged${if (ack.complete) " (complete)" else ""}")
         _messages.value.firstOrNull { it.outgoing && it.messageId == out.transferId && it.peerId == out.destId }?.let { m ->
             _transfers.update { it + (m.key to out.acked.cardinality().toFloat() / out.total) }
         }

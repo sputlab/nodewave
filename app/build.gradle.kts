@@ -12,8 +12,8 @@ android {
         applicationId = "com.nodewave.mesh"
         minSdk = 29
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.12.1"
+        versionCode = 19
+        versionName = "0.12.2"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
     }

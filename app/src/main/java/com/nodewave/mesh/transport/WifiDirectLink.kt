@@ -138,6 +138,7 @@ class WifiDirectLink(
                 link.lastActive = System.currentTimeMillis()
                 Result.success(Unit)
             } catch (e: IOException) {
+                MeshLog.e("WIFI_DIRECT: write to ${peerId.take(6)} failed", e)
                 dropLink(link)
                 Result.failure(e)
             }
@@ -185,10 +186,10 @@ class WifiDirectLink(
                     val len = stream.readUnsignedShort()
                     val bytes = ByteArray(len).also { stream.readFully(it) }
                     link.lastActive = System.currentTimeMillis()
-                    _incoming.tryEmit(IncomingPayload("wfd:${link.peerId}", bytes))
+                    if (!_incoming.tryEmit(IncomingPayload("wfd:${link.peerId}", bytes))) MeshLog.e("WIFI_DIRECT: incoming buffer full, frame of ${bytes.size} B lost")
                 }
             } catch (e: IOException) {
-                // closed by either side
+                MeshLog.d("WIFI_DIRECT: read from ${link.peerId.take(6)} ended: ${e.message}")
             } finally {
                 dropLink(link)
             }

@@ -72,6 +72,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val transfers: StateFlow<Map<String, Float>> = messenger.transfers
     val photos = PhotoController(viewModelScope, messenger, application) { voice.postNotice(it) }
     fun sendTestPhoto(peerId: String) = photos.sendTest(peerId)
+    fun retryBlob(key: String) = messenger.retryBlob(key)
     suspend fun loadImage(blobId: String, maxPx: Int) = photos.load(engine.blobStore, blobId, maxPx)
     init {
         viewModelScope.launch { engine.settings.settings.collect { messenger.voiceLowBandwidth = it.voiceLowBandwidth; messenger.fastLinkMode = it.fastLinkMode } }

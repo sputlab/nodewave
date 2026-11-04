@@ -5,6 +5,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-05
+
+Transfers that survive a weak radio.
+
+### Fixed
+- A photo or clip sent from a phone with an unreliable Bluetooth client (the Honor View 10) failed with "No answer" as soon as a few chunks timed out: a chunk whose send failed was skipped until the next pass, eight seconds later, and five passes without news ended the transfer. A chunk that fails to send is now tried again at once (three times, with a growing pause), the transfer gives up after six passes without any progress instead of four, and the failure says how far it got ("No answer from Mi Note 10 (120/283 chunks got through)").
+
+### Added
+- **Tap a failed photo or voice message to send it again.** It is sent with a new transfer id and chunks cut for the link as it is now (so a failed Bluetooth photo may now go over a Wi-Fi Direct link). If the link cannot carry it any more the message says so.
+- Log lines for acknowledgements and every sixteenth chunk received, to see where a transfer stops.
+- Tests: transient radio timeouts, a failed photo retried successfully, retry only for failed outgoing transfers.
+
+### Checked on the phones
+- Honor to Mi with a real photo from the Honor's library: over Wi-Fi Direct (154 chunks in about 3 s) and, with the Mi refusing the link, over Bluetooth (283 chunks in about 27 s), both delivered. The failure seen in use was not reproduced; if it happens again, the failed message now says how far it got.
+
 ## [0.12.1] - 2026-11-04
 
 Photos from the camera, the photo library and files, and the fix that made every real photo fail.

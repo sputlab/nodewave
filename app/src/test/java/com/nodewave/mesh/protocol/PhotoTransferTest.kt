@@ -96,3 +96,60 @@ class PhotoTransferTest {
         assertTrue(DataFrame.chunkCount(BlobPolicy.maxBytes(BlobKind.IMAGE, LinkClass.FAST), LinkClass.FAST) <= BlobPolicy.MAX_CHUNKS)
     }
 }
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class TransferRobustnessTest {
+    private fun jpeg(size: Int) = ByteArray(size) { (it * 7 + 3).toByte() }
+    private fun TestNode.images() = messenger.messages.value.filter { it.kind == MessageKind.IMAGE }
+
+    @Test
+    fun aRadioThatTimesOutForAMomentDoesNotLoseTheTransfer() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        a.messenger.sendImage(b.id, jpeg(5_000)) // starts the handshake
+        advanceTimeBy(1_000); runCurrent()
+        a.transport.failNextDataSends = 3 // no more failures in a row than the retries a chunk gets
+        val pic = jpeg(20_000)
+
+        a.messenger.sendImage(b.id, pic)
+        advanceTimeBy(6_000); runCurrent() // less than the 8 s a second pass would take: the chunks were retried at once
+
+        assertEquals(2, b.images().size)
+        assertTrue(a.images().all { it.status == MessageStatus.DELIVERED })
+    }
+
+    @Test
+    fun aFailedPhotoCanBeSentAgainAndArrives() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        net.dropIf = { Packet.decode(it)?.type == PacketType.DATA } // nothing gets through
+        a.messenger.sendImage(b.id, jpeg(3_000))
+        advanceTimeBy(300_000); runCurrent()
+        val failed = a.images().single()
+        assertEquals(MessageStatus.FAILED, failed.status)
+        assertTrue(failed.note!!.startsWith("No answer"))
+        assertTrue(b.images().isEmpty())
+
+        net.dropIf = { false }
+        assertTrue(a.messenger.retryBlob(failed.key))
+        advanceTimeBy(120_000); runCurrent()
+
+        assertEquals(1, a.images().size)
+        assertEquals(MessageStatus.DELIVERED, a.images().single().status)
+        assertEquals(1, b.images().size)
+    }
+
+    @Test
+    fun onlyAFailedOutgoingTransferCanBeRetried() = runTest {
+        val net = network()
+        val a = node(net); val b = node(net)
+        net.link(a.id, b.id)
+        a.messenger.sendImage(b.id, jpeg(1_000))
+        advanceTimeBy(60_000); runCurrent()
+        assertEquals(MessageStatus.DELIVERED, a.images().single().status)
+        assertTrue(!a.messenger.retryBlob(a.images().single().key))
+        assertTrue(!a.messenger.retryBlob(b.images().single().key))
+    }
+}
