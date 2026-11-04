@@ -8,18 +8,20 @@ import com.nodewave.mesh.protocol.ChatMessage
 import com.nodewave.mesh.protocol.GeoPosition
 import com.nodewave.mesh.protocol.Group
 import com.nodewave.mesh.protocol.GroupState
+import com.nodewave.mesh.protocol.MessageKind
 import com.nodewave.mesh.protocol.MessageStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Framework SQLite (no extra dependency): chat history and peer public keys. */
-class NodeWaveDb(context: Context) : SQLiteOpenHelper(context.applicationContext, "nodewave.db", null, 4) {
+class NodeWaveDb(context: Context) : SQLiteOpenHelper(context.applicationContext, "nodewave.db", null, 5) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """CREATE TABLE messages(
                 key TEXT PRIMARY KEY, message_id INTEGER NOT NULL, peer_id TEXT NOT NULL, peer_name TEXT NOT NULL,
                 outgoing INTEGER NOT NULL, text BLOB NOT NULL, is_ping INTEGER NOT NULL, hops INTEGER NOT NULL,
-                time INTEGER NOT NULL, status TEXT NOT NULL, group_id TEXT, group_send TEXT)"""
+                time INTEGER NOT NULL, status TEXT NOT NULL, group_id TEXT, group_send TEXT,
+                kind TEXT, blob_id TEXT, duration_ms INTEGER NOT NULL DEFAULT 0, codec INTEGER NOT NULL DEFAULT 0, note TEXT)"""
         )
         db.execSQL("CREATE INDEX messages_time ON messages(time)")
         db.execSQL("CREATE TABLE groups(id TEXT PRIMARY KEY, name TEXT NOT NULL, admin TEXT NOT NULL, members TEXT NOT NULL, state TEXT NOT NULL)")
@@ -47,6 +49,13 @@ class NodeWaveDb(context: Context) : SQLiteOpenHelper(context.applicationContext
             db.execSQL("CREATE TABLE groups(id TEXT PRIMARY KEY, name TEXT NOT NULL, admin TEXT NOT NULL, members TEXT NOT NULL, state TEXT NOT NULL)")
         }
         if (oldVersion < 4) createNodes(db)
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE messages ADD COLUMN kind TEXT")
+            db.execSQL("ALTER TABLE messages ADD COLUMN blob_id TEXT")
+            db.execSQL("ALTER TABLE messages ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE messages ADD COLUMN codec INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE messages ADD COLUMN note TEXT")
+        }
     }
 }
 
@@ -60,7 +69,7 @@ class SqliteMessageStore(
     override suspend fun loadRecent(limit: Int): List<ChatMessage> = withContext(Dispatchers.IO) {
         val out = ArrayList<ChatMessage>()
         helper.readableDatabase.rawQuery(
-            "SELECT key,message_id,peer_id,peer_name,outgoing,text,is_ping,hops,time,status,group_id,group_send " +
+            "SELECT key,message_id,peer_id,peer_name,outgoing,text,is_ping,hops,time,status,group_id,group_send,kind,blob_id,duration_ms,codec,note " +
                 "FROM messages ORDER BY time DESC LIMIT ?", arrayOf(limit.toString())
         ).use { c ->
             while (c.moveToNext()) {
@@ -70,7 +79,9 @@ class SqliteMessageStore(
                     text = cipher.decrypt(c.getBlob(5))?.toString(Charsets.UTF_8) ?: UNREADABLE,
                     isPing = c.getInt(6) == 1, hops = c.getInt(7), time = c.getLong(8),
                     status = runCatching { MessageStatus.valueOf(c.getString(9)) }.getOrDefault(MessageStatus.FAILED),
-                    groupId = c.getString(10), groupSendId = c.getString(11)
+                    groupId = c.getString(10), groupSendId = c.getString(11),
+                    kind = runCatching { MessageKind.valueOf(c.getString(12)) }.getOrDefault(MessageKind.TEXT),
+                    blobId = c.getString(13), durationMs = c.getInt(14), codec = c.getInt(15), note = c.getString(16)
                 )
             }
         }
@@ -86,6 +97,8 @@ class SqliteMessageStore(
             put("is_ping", if (message.isPing) 1 else 0); put("hops", message.hops)
             put("time", message.time); put("status", message.status.name)
             put("group_id", message.groupId); put("group_send", message.groupSendId)
+            put("kind", message.kind.name); put("blob_id", message.blobId); put("duration_ms", message.durationMs)
+            put("codec", message.codec); put("note", message.note)
         }
         db.insertWithOnConflict("messages", null, values, SQLiteDatabase.CONFLICT_REPLACE)
         db.execSQL(
@@ -232,4 +245,31 @@ class SqliteNodeStore(private val helper: NodeWaveDb) : NodeStore {
         helper.writableDatabase.delete("nodes", "id=?", arrayOf(id))
         Unit
     }
+}
+
+/** Clip bytes as one file each, encrypted at rest like the message text. File names are random ids made by this app. */
+class FileBlobStore(private val dir: java.io.File, private val cipher: AtRestCipher) : BlobStore {
+    private fun file(id: String): java.io.File {
+        require(id.all { it.isLetterOrDigit() || it == '-' }) { "bad blob id" }
+        return java.io.File(dir, id)
+    }
+
+    override suspend fun put(id: String, bytes: ByteArray) = withContext(Dispatchers.IO) {
+        dir.mkdirs()
+        file(id).writeBytes(cipher.encrypt(bytes))
+    }
+
+    override suspend fun get(id: String): ByteArray? = withContext(Dispatchers.IO) {
+        val f = file(id)
+        if (f.exists()) cipher.decrypt(f.readBytes()) else null
+    }
+
+    override suspend fun delete(id: String) = withContext(Dispatchers.IO) { file(id).delete(); Unit }
+
+    override suspend fun retain(keep: Set<String>) = withContext(Dispatchers.IO) {
+        dir.listFiles()?.filter { it.name !in keep }?.forEach { it.delete() }
+        Unit
+    }
+
+    override suspend fun clear() = withContext(Dispatchers.IO) { dir.listFiles()?.forEach { it.delete() }; Unit }
 }

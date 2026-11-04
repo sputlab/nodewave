@@ -124,6 +124,25 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
         }
         item { LoraPanel(vm, s.lora, usb) { usb = vm.usbDevices() } }
         item {
+            TacPanel(title = "Voice messages") {
+                Text("Recording", color = TacticalText, fontFamily = Sans, fontSize = 14.sp)
+                Segmented(listOf(true to "Hold to record", false to "Tap, tap, send"), s.voiceHoldToRecord, { v -> vm.updateSettings { it.copy(voiceHoldToRecord = v) } })
+                Text(
+                    if (s.voiceHoldToRecord) "Hold the microphone button while you speak, let go to send, slide left to cancel."
+                    else "Tap the microphone to start, tap Stop, then Send (or Discard). Clips last 15 seconds at most.",
+                    color = TacticalDim, fontFamily = Sans, fontSize = 12.sp
+                )
+                ToggleRow(
+                    "Always low bandwidth", "Use the thinnest codec on every link: smaller and faster to send, rougher to hear. Otherwise the codec follows the slowest link on the way to the person.",
+                    s.voiceLowBandwidth, { on -> vm.updateSettings { it.copy(voiceLowBandwidth = on) } }
+                )
+                var codecReport by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                TacButton("Test codecs on this phone", { scope.launch { codecReport = "Testing…"; codecReport = vm.voice.selfTest() } }, small = true)
+                codecReport?.let { Text(it, color = TacticalDim, fontFamily = Mono, fontSize = 10.sp) }
+            }
+        }
+        item {
             TacPanel(title = "Position") {
                 Text("Who can see where you are", color = TacticalText, fontFamily = Sans, fontSize = 14.sp)
                 Segmented(listOf(PositionSharing.OFF to "Nobody", PositionSharing.VERIFIED to "Verified", PositionSharing.EVERYONE to "Everyone"), s.positionSharing, { v ->

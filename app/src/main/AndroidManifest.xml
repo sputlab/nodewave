@@ -8,6 +8,8 @@
 
     <!-- Only for scanning a contact's QR code; the app works without a camera. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Voice messages: the microphone is used only while the record button is held or toggled on. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
 
     <!-- API 29-30: legacy Bluetooth + location (required for BLE scan results) -->

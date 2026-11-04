@@ -213,10 +213,15 @@ private fun ConversationView(vm: MainViewModel, key: String, summary: Conversati
                     Bubble(l.outgoing, if (l.outgoing) null else l.senderName, l.senderId, l.text, l.time,
                         status = if (l.outgoing) "${l.delivered}/${l.total} delivered" + if (l.failed > 0) " · ${l.failed} failed" else "" else null,
                         statusColor = if (!l.outgoing) TacticalDim else if (l.failed > 0) TacticalRed else if (l.delivered == l.total) TacticalGreen else TacticalAmber)
-                } else items(personal, key = { it.key }) { m -> PersonalLine(m) }
+                } else items(personal, key = { it.key }) { m -> PersonalLine(vm, m) }
             }
-            Composer(
+            val recording by vm.voice.recording.collectAsStateWithLifecycle()
+            val voiceSettings by vm.settings.collectAsStateWithLifecycle()
+            VoiceNotice(vm)
+            if (recording !is com.nodewave.mesh.Recording.Idle) RecordingBar(vm, voiceSettings.voiceHoldToRecord)
+            else Composer(
                 enabled = state == TransportState.ACTIVE, placeholder = "Message $title",
+                mic = if (isGroup) null else ({ MicButton(vm, id, state == TransportState.ACTIVE) }),
                 maxBytes = if (isGroup) GroupCodec.MAX_TEXT_BYTES else MeshMessenger.MAX_TEXT_BYTES,
                 onPing = if (isGroup) null else ({ vm.pingPeer(id) }),
                 onSend = { text -> if (isGroup) vm.sendGroupText(id, text) else vm.sendToPeer(id, text) }
@@ -239,7 +244,14 @@ private fun ConversationView(vm: MainViewModel, key: String, summary: Conversati
 private fun placeholderNode(id: String, name: String) = KnownNode(id, name, name, null, false, false, false, false, false, null, null, 0, 0, null)
 
 @Composable
-private fun PersonalLine(m: ChatMessage) {
+private fun PersonalLine(vm: MainViewModel, m: ChatMessage) {
+    if (m.kind == com.nodewave.mesh.protocol.MessageKind.VOICE) {
+        VoiceBubble(
+            vm, m, statusText = if (m.outgoing) statusLabel(m.status) + if (m.hops > 0) " · ${m.hops} relay" else "" else if (m.hops > 0) "${m.hops} relay" else null,
+            statusColor = when (m.status) { MessageStatus.DELIVERED -> TacticalGreen; MessageStatus.FAILED -> TacticalRed; MessageStatus.RECEIVED -> TacticalDim; else -> TacticalAmber }
+        )
+        return
+    }
     if (m.isPing) {
         Text(
             (if (m.outgoing) "PING SENT" else "PING RECEIVED") + " · ${clock(m.time)}" + if (m.outgoing) " · ${statusLabel(m.status)}" else "",
@@ -280,7 +292,7 @@ private fun Bubble(outgoing: Boolean, sender: String?, senderId: String, text: S
 }
 
 @Composable
-private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPing: (() -> Unit)?, onSend: (String) -> Boolean) {
+private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPing: (() -> Unit)?, onSend: (String) -> Boolean, mic: (@Composable () -> Unit)? = null) {
     var text by remember { mutableStateOf("") }
     fun send() { if (text.isNotBlank() && onSend(text)) text = "" }
     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -290,6 +302,7 @@ private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPin
             imeAction = androidx.compose.ui.text.input.ImeAction.Send, onImeAction = { if (enabled) send() }
         )
         if (onPing != null) TacButton("Ping", onPing, enabled = enabled, kind = TacKind.AMBER, small = true)
+        if (mic != null && text.isBlank()) mic()
         TacButton("Send", ::send, enabled = enabled && text.isNotBlank(), kind = TacKind.PRIMARY, small = true)
     }
 }

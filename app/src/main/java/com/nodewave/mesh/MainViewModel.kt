@@ -58,6 +58,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val activity: StateFlow<List<ActivityEvent>> = messenger.activity
     val stats: StateFlow<MeshStats> = messenger.stats
     val settings: StateFlow<AppSettings> = engine.settings.settings
+
+    val voice = VoiceController(viewModelScope, messenger, engine.blobStore)
+    val transfers: StateFlow<Map<String, Float>> = messenger.transfers
+    init {
+        viewModelScope.launch { engine.settings.settings.collect { messenger.voiceLowBandwidth = it.voiceLowBandwidth } }
+    }
     /** A station set to a fixed position shows (and sends) that position; otherwise the latest GPS fix. */
     val ownPosition: StateFlow<GeoPosition?> = combine(engine.positionTracker.latest, engine.settings.settings) { gps, s ->
         if (s.useFixedPosition && s.fixedPosition != null) s.fixedPosition.copy(timeSec = 0) else gps

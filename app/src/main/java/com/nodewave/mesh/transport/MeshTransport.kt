@@ -1,5 +1,6 @@
 package com.nodewave.mesh.transport
 
+import com.nodewave.mesh.protocol.LinkClass
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -46,6 +47,9 @@ interface MeshTransport {
     suspend fun stop()
     suspend fun send(targetPeerId: String, payload: ByteArray, options: SendOptions = SendOptions()): Result<Unit>
     suspend fun broadcast(payload: ByteArray): Result<Unit>
+
+    /** What kind of link this transport has to [peerId]; a transport with a single kind of radio just returns it. */
+    fun linkClassTo(peerId: String): LinkClass = LinkClass.MEDIUM
 }
 
 /** A low-priority send was skipped because the radio was busy; safe to retry later. */

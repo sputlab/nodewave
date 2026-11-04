@@ -43,7 +43,11 @@ data class AppSettings(
     /** Tile server URL with {z}/{x}/{y}; empty means no online tiles. */
     val tileUrl: String = "",
     /** File name (inside the app's map folder) of an imported offline map, if any. */
-    val mapArchive: String? = null
+    val mapArchive: String? = null,
+    /** Voice messages: true = hold the button to record, false = tap to start, tap to stop, then send. */
+    val voiceHoldToRecord: Boolean = true,
+    /** Always use the thinnest speech codec, whatever the link. */
+    val voiceLowBandwidth: Boolean = false
 )
 
 /** SharedPreferences-backed settings plus the "last opened" time of each conversation. */
@@ -85,6 +89,8 @@ class SettingsStore(context: Context) {
             useFixedPosition = prefs.getBoolean("use_fixed", false),
             tileUrl = prefs.getString("tile_url", "") ?: "",
             mapArchive = prefs.getString("map_archive", null),
+            voiceHoldToRecord = prefs.getBoolean("voice_hold", true),
+            voiceLowBandwidth = prefs.getBoolean("voice_low", false),
             lora = LoraSettings(
                 powerDbm = prefs.getInt("lora_power", d.lora.powerDbm),
                 airRateKbps = prefs.getFloat("lora_rate", d.lora.airRateKbps.toFloat()).toDouble(),
@@ -103,6 +109,7 @@ class SettingsStore(context: Context) {
             s.fixedPosition?.let { putInt("fix_lat", it.latE7); putInt("fix_lon", it.lonE7) } ?: run { remove("fix_lat"); remove("fix_lon") }
             putBoolean("use_fixed", s.useFixedPosition)
             putString("tile_url", s.tileUrl); putString("map_archive", s.mapArchive)
+            putBoolean("voice_hold", s.voiceHoldToRecord); putBoolean("voice_low", s.voiceLowBandwidth)
             putInt("lora_power", s.lora.powerDbm); putFloat("lora_rate", s.lora.airRateKbps.toFloat()); putInt("lora_channel", s.lora.channel)
             putString("lora_mode", s.lora.mode.name); putInt("lora_packet", s.lora.packetBytes)
         }.apply()

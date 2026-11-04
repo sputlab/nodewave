@@ -6,18 +6,22 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class HelloPayloadTest {
-    private fun node(i: Int, name: String? = "N$i") = NodeAdvertisement.Info("%016x".format(i), name)
+    private fun node(i: Int, name: String? = "N$i", link: LinkClass = LinkClass.MEDIUM) =
+        HelloPayload.Entry(NodeAdvertisement.Info("%016x".format(i), name), link)
+
+    private fun HelloPayload.Entry.same(o: HelloPayload.Entry) = info == o.info && link == o.link
 
     @Test
     fun roundTrip() {
-        val list = listOf(node(1), node(2, "Honor View 10"))
+        val list = listOf(node(1), node(2, "Honor View 10", LinkClass.SLOW), node(3, link = LinkClass.FAST))
         val decoded = HelloPayload.decode(HelloPayload.encode(list))!!
-        assertEquals(list, decoded)
+        assertEquals(list.size, decoded.size)
+        list.zip(decoded).forEach { (a, b) -> assert(a.same(b)) }
     }
 
     @Test
     fun emptyListIsValid() {
-        assertEquals(emptyList<NodeAdvertisement.Info>(), HelloPayload.decode(HelloPayload.encode(emptyList())))
+        assertEquals(0, HelloPayload.decode(HelloPayload.encode(emptyList()))!!.size)
     }
 
     @Test
@@ -29,7 +33,14 @@ class HelloPayloadTest {
 
     @Test
     fun missingNameDecodesAsNull() {
-        assertNull(HelloPayload.decode(HelloPayload.encode(listOf(node(1, null))))!!.single().name)
+        assertNull(HelloPayload.decode(HelloPayload.encode(listOf(node(1, null))))!!.single().info.name)
+    }
+
+    @Test
+    fun anUnknownLinkClassIsRejected() {
+        val bytes = HelloPayload.encode(listOf(node(1)))
+        bytes[bytes.size - 1] = 99
+        assertNull(HelloPayload.decode(bytes))
     }
 
     @Test

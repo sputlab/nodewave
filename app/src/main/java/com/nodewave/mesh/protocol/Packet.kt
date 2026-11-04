@@ -17,7 +17,16 @@ enum class PacketType(val code: Int) {
     GROUP(6),
 
     /** A node's position, sealed; see [GeoPosition]. */
-    POSITION(7);
+    POSITION(7),
+
+    /** One chunk of a bulk transfer (voice clip, photo); see [DataFrame]. */
+    DATA(8),
+
+    /** The receiver's sealed bitmap of the chunks it holds; see [DataFrame]. */
+    DATA_ACK(9),
+
+    /** A relay telling the author that it cannot forward a transfer over its next link; unsealed, see [DataFrame]. */
+    DATA_REFUSE(10);
 
     companion object {
         fun fromCode(code: Int): PacketType? = entries.firstOrNull { it.code == code }

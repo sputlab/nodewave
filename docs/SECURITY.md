@@ -86,6 +86,14 @@ receives a position can keep it and pass it on; with "everyone" any node in rang
 it; the time comes from the sender's clock and is not checked; positions are stored on the receiving phone in
 clear in the app database (not in the encrypted message table).
 
+## Voice messages and bulk transfers
+
+A clip travels as `DATA` packets, one sealed chunk each (same pairwise session and authenticated data as chat, plus the byte that names the link class the transfer needs, so a relay cannot change it). The receiver's `DATA_ACK` is sealed too. Relays and eavesdroppers see packet sizes, timing, sender and recipient and that it is bulk data, not what it contains. Limits:
+
+- **`DATA_REFUSE` is not authenticated**: a relay has no session with the author. Anyone in the mesh can forge one and make a transfer stop, which is no worse than jamming.
+- A sender could put a lower class byte on a transfer to get it past slow relays; the receiver drops chunks whose byte does not match their content, and receivers cap the number, size and age of transfers they assemble.
+- Clips are stored on the phone encrypted with the Keystore key, like message text; they are not forward secret on the device.
+
 ## Known limitations
 
 - **Forward secrecy is best effort on the device.** Keys are zeroed when sessions end, but the JVM may leave

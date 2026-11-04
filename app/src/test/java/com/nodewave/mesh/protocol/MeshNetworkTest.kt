@@ -278,7 +278,7 @@ class MeshNetworkTest {
         assertEquals(setOf(b.id), a.messenger.nodes.value.map { it.id }.toSet())
 
         // plain (unsealed) HELLO claiming b can reach a node that does not exist
-        val fake = HelloPayload.encode(listOf(NodeAdvertisement.Info(evil.nodeId, "ghost")))
+        val fake = HelloPayload.encode(listOf(HelloPayload.Entry(NodeAdvertisement.Info(evil.nodeId, "ghost"))))
         net.inject(a.id, Packet(PacketType.HELLO, b.id, a.id, 4242, fake, ttl = 1).encode())
         // the same, "sealed" with garbage under b's real session id
         val sid = net.wireOfType(PacketType.HELLO).first { it.senderId == b.id }.payload.copyOfRange(0, 4)

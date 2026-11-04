@@ -52,12 +52,15 @@ class MeshEngine(app: Application) {
     val mapDownloader = MapDownloader(mapsDir, scope) { name -> settings.update { it.copy(mapArchive = name) } }
 
     private val db = NodeWaveDb(app)
+    val blobStore: com.nodewave.mesh.data.BlobStore = com.nodewave.mesh.data.FileBlobStore(java.io.File(app.filesDir, "clips"), cipher)
+
     val messenger = MeshMessenger(
         transport, identity, scope,
         messageStore = SqliteMessageStore(db, cipher),
         peerKeys = SqlitePeerKeyStore(db),
         groupStore = SqliteGroupStore(db),
-        nodeStore = SqliteNodeStore(db)
+        nodeStore = SqliteNodeStore(db),
+        blobStore = blobStore
     )
 
     val positionTracker = PositionTracker(app) { messenger.publishPosition(it) }

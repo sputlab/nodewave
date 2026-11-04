@@ -12,9 +12,16 @@ class RoutingTest {
     private var now = 1_000L
     private val table = RoutingTable(ttlMs = 60_000) { now }
 
-    private fun info(id: String) = NodeAdvertisement.Info(id, id.takeLast(1))
+    private fun info(id: String, link: LinkClass = LinkClass.MEDIUM) = HelloPayload.Entry(NodeAdvertisement.Info(id, id.takeLast(1)), link)
 
     // ---- RoutingTable
+
+    @Test
+    fun aRouteRemembersTheClassOfItsLastLink() {
+        table.update(b, listOf(info(c, LinkClass.SLOW), info(d)), me)
+        assertEquals(LinkClass.SLOW, table.routeTo(c, setOf(b))!!.hopLink)
+        assertEquals(LinkClass.MEDIUM, table.routeTo(d, setOf(b))!!.hopLink)
+    }
 
     @Test
     fun helloCreatesRoutesViaSender() {

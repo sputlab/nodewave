@@ -15,6 +15,25 @@ interface MessageStore {
     suspend fun clear()
 }
 
+/** The audio (later photo) bytes of messages, kept apart from the message rows. */
+interface BlobStore {
+    suspend fun put(id: String, bytes: ByteArray)
+    suspend fun get(id: String): ByteArray?
+    suspend fun delete(id: String)
+
+    /** Deletes every blob whose id is not in [keep]. */
+    suspend fun retain(keep: Set<String>)
+    suspend fun clear()
+}
+
+object NoBlobStore : BlobStore {
+    override suspend fun put(id: String, bytes: ByteArray) = Unit
+    override suspend fun get(id: String): ByteArray? = null
+    override suspend fun delete(id: String) = Unit
+    override suspend fun retain(keep: Set<String>) = Unit
+    override suspend fun clear() = Unit
+}
+
 /** Public keys learned from peers (trust on first use; a node ID is the hash of its key, so it cannot change). */
 interface PeerKeyStore {
     suspend fun get(nodeId: String): ByteArray?

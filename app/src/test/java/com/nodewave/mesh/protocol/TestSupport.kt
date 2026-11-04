@@ -50,9 +50,11 @@ internal class FakeNetwork(private val clock: () -> Long = { 0L }) {
     private class Link(val a: String, val aId: String, val b: String, val bId: String, var expiresAt: Long)
     private val links = mutableMapOf<Pair<String, String>, Link>() // (holder node, holder's link id) -> link
 
-    fun link(a: String, b: String) {
+    fun link(a: String, b: String, cls: LinkClass = LinkClass.MEDIUM) {
         transports.getValue(a).see(b)
         transports.getValue(b).see(a)
+        transports.getValue(a).linkClasses[b] = cls
+        transports.getValue(b).linkClasses[a] = cls
     }
 
     /** Hand arbitrary bytes to a node as if they had just been written to its GATT server. */
@@ -70,6 +72,10 @@ internal class FakeNetwork(private val clock: () -> Long = { 0L }) {
         override val discoveredPeers: StateFlow<List<PeerNode>> = peers
         private val incoming = MutableSharedFlow<IncomingPayload>(extraBufferCapacity = 256)
         override val incomingPayloads: Flow<IncomingPayload> = incoming.asSharedFlow()
+
+        /** What kind of link this node has to each peer; MEDIUM unless a test says otherwise. */
+        val linkClasses = mutableMapOf<String, LinkClass>()
+        override fun linkClassTo(peerId: String): LinkClass = linkClasses[peerId] ?: LinkClass.MEDIUM
 
         /** While true, low-priority sends are refused as if the radio were in use. */
         @Volatile var busy = false
@@ -133,6 +139,15 @@ internal class InMemoryMessageStore : MessageStore {
     override suspend fun clear() { rows.clear() }
 }
 
+internal class InMemoryBlobStore : com.nodewave.mesh.data.BlobStore {
+    val blobs = LinkedHashMap<String, ByteArray>()
+    override suspend fun put(id: String, bytes: ByteArray) { blobs[id] = bytes }
+    override suspend fun get(id: String) = blobs[id]
+    override suspend fun delete(id: String) { blobs.remove(id) }
+    override suspend fun retain(keep: Set<String>) { blobs.keys.retainAll(keep) }
+    override suspend fun clear() { blobs.clear() }
+}
+
 internal class InMemoryGroupStore : GroupStore {
     val groups = LinkedHashMap<String, Group>()
     override suspend fun loadAll() = groups.values.toList()
@@ -173,7 +188,8 @@ internal class TestNode(
     val store: InMemoryMessageStore,
     val keys: InMemoryPeerKeyStore,
     val groupStore: InMemoryGroupStore = InMemoryGroupStore(),
-    val nodeStore: InMemoryNodeStore = InMemoryNodeStore()
+    val nodeStore: InMemoryNodeStore = InMemoryNodeStore(),
+    val blobs: InMemoryBlobStore = InMemoryBlobStore()
 ) {
     val id: String get() = identity.nodeId
     fun received() = messenger.messages.value.filter { !it.outgoing }
@@ -197,6 +213,7 @@ internal fun TestScope.node(
     keys: InMemoryPeerKeyStore = InMemoryPeerKeyStore(),
     groupStore: InMemoryGroupStore = InMemoryGroupStore(),
     nodeStore: InMemoryNodeStore = InMemoryNodeStore(),
+    blobs: InMemoryBlobStore = InMemoryBlobStore(),
     /** Defaults to a fixed seed per node created, so timings (hello jitter, who starts a handshake) repeat. */
     random: Random? = null
 ): TestNode {
@@ -207,9 +224,10 @@ internal fun TestScope.node(
         cryptoDispatcher = StandardTestDispatcher(testScheduler),
         clock = { testScheduler.currentTime },
         groupStore = groupStore,
-        nodeStore = nodeStore
+        nodeStore = nodeStore,
+        blobStore = blobs
     )
-    return TestNode(identity, messenger, transport, store, keys, groupStore, nodeStore)
+    return TestNode(identity, messenger, transport, store, keys, groupStore, nodeStore, blobs)
 }
 
 /** Lets queued sends/relays/ACKs run, but stays below the 2 s tick of the HELLO loop. */

@@ -5,7 +5,9 @@ import com.nodewave.mesh.crypto.LocalIdentity
 import com.nodewave.mesh.crypto.Sealed
 import com.nodewave.mesh.crypto.Session
 import com.nodewave.mesh.crypto.SessionManager
+import com.nodewave.mesh.data.BlobStore
 import com.nodewave.mesh.data.GroupStore
+import com.nodewave.mesh.data.NoBlobStore
 import com.nodewave.mesh.data.MessageStore
 import com.nodewave.mesh.data.NoGroupStore
 import com.nodewave.mesh.data.NodeStore
@@ -21,6 +23,8 @@ import com.nodewave.mesh.transport.TransportState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import java.util.BitSet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -70,7 +74,8 @@ class MeshMessenger(
     private val clock: () -> Long = System::currentTimeMillis,
     private val sessions: SessionManager = SessionManager(identity, clock),
     private val groupStore: GroupStore = NoGroupStore,
-    private val nodeStore: NodeStore = NoNodeStore
+    private val nodeStore: NodeStore = NoNodeStore,
+    private val blobStore: BlobStore = NoBlobStore
 ) {
     companion object {
         const val PING_TEXT = "CIAO - 73"
@@ -108,6 +113,11 @@ class MeshMessenger(
         /** A neighbour-set change is announced after a random 0-4 s, so phones started together do not all connect at once. */
         private const val HELLO_CHANGE_DELAY_MS = 4_000L
         private const val ROUTE_TTL_MS = 150_000L
+        /** After sending the chunks still missing, wait this long for the receiver's bitmap before sending again. */
+        private const val ACK_WAIT_MS = 8_000L
+        private const val MAX_IDLE_ROUNDS = 4
+        private const val IDLE_ACK_MS = 2_500L
+        private const val ACK_MIN_INTERVAL_MS = 1_500L
     }
 
     val localNodeId: String = identity.nodeId
@@ -226,6 +236,7 @@ class MeshMessenger(
     fun clearHistory() {
         _messages.value = emptyList()
         storeOps.trySend(StoreOp.Clear)
+        scope.launch { runCatching { blobStore.clear() } }
     }
 
     // ---------------------------------------------------------------- persistence
@@ -258,6 +269,7 @@ class MeshMessenger(
         // the seen-cache still guards the current process.
         restored.filter { !it.outgoing }.forEach { seen.add("${it.peerId}:${it.messageId}") }
         _messages.update { current -> (restored + current).takeLast(MAX_HISTORY) }
+        runCatching { blobStore.retain(_messages.value.mapNotNull { it.blobId }.toSet()) }
         MeshLog.d("Restored ${restored.size} message(s)")
     }
 
@@ -460,13 +472,19 @@ class MeshMessenger(
         packet: Packet,
         originId: String?,
         expectReply: Boolean = false,
-        lowPriority: Boolean = false
+        lowPriority: Boolean = false,
+        /** Next hops are limited to links of at least this class (bulk transfers). */
+        needClass: LinkClass? = null
     ): Result<Unit> {
         val direct = transport.discoveredPeers.value.map { it.id }.toSet()
-        val hops = Router.nextHops(
+        var hops = Router.nextHops(
             packet.destId, originId, direct, routing,
             ignoreDirect = originId == null && _ignoreDirect.value
         )
+        if (needClass != null && hops.isNotEmpty()) {
+            hops = hops.filter { transport.linkClassTo(it).code >= needClass.code }
+            if (hops.isEmpty()) return Result.failure(LinkTooSlowException(needClass))
+        }
         if (hops.isEmpty()) {
             MeshLog.e("No route to ${nameOf(packet.destId)} [${packet.destId.take(6)}]")
             return Result.failure(IllegalStateException("No route"))
@@ -502,6 +520,9 @@ class MeshMessenger(
             PacketType.MESSAGE, PacketType.PING -> onMessage(packet, linkId)
             PacketType.GROUP -> onGroup(packet, linkId)
             PacketType.POSITION -> onPosition(packet, linkId)
+            PacketType.DATA -> onData(packet, linkId)
+            PacketType.DATA_ACK -> onDataAck(packet, linkId)
+            PacketType.DATA_REFUSE -> onDataRefuse(packet)
         }
     }
 
@@ -510,7 +531,7 @@ class MeshMessenger(
      * none or authentication fails; in the first case a background handshake is started so the next
      * packet from that peer can be read.
      */
-    private fun open(packet: Packet): Pair<Session, ByteArray>? {
+    private fun open(packet: Packet, extraAad: ByteArray = ByteArray(0)): Pair<Session, ByteArray>? {
         val sid = Sealed.sidOf(packet.payload)
         val session = sid?.let { sessions.sessionById(packet.senderId, it) }
         if (session == null) {
@@ -518,7 +539,7 @@ class MeshMessenger(
             requestSessionInBackground(packet.senderId)
             return null
         }
-        val plain = Sealed.open(session, packet.payload, packet.aad())
+        val plain = Sealed.open(session, packet.payload, packet.aad() + extraAad)
         if (plain == null) {
             MeshLog.e("${packet.type} from ${nameOf(packet.senderId)} dropped: authentication failed")
             return null
@@ -875,7 +896,22 @@ class MeshMessenger(
         if (relayed.size > MAX_SEEN) relayed.remove(relayed.keys.first())
         count { it.copy(relayed = it.relayed + 1) }
         note(ActivityEvent.Kind.RELAY, "Relayed ${packet.type.name.lowercase()} ${nameOf(packet.senderId)} -> ${nameOf(packet.destId)}", packet.senderId)
-        scope.launch { dispatch(packet.forwarded(), originId = packet.senderId) }
+        scope.launch {
+            val need = if (packet.type == PacketType.DATA) DataFrame.needClassOf(packet.payload) else null
+            val result = dispatch(packet.forwarded(), originId = packet.senderId, needClass = need)
+            if (need != null && result.exceptionOrNull() is LinkTooSlowException) refuse(packet, need)
+        }
+    }
+
+    private val lastRefuse = HashMap<String, Long>()
+
+    /** Tells the author of a transfer that this node cannot carry it further (see [DataFrame]). Unsealed; at most one per author per 2 s. */
+    private suspend fun refuse(packet: Packet, need: LinkClass) {
+        val now = clock()
+        lastRefuse[packet.senderId]?.let { if (now - it < 2_000L) return }
+        lastRefuse[packet.senderId] = now
+        MeshLog.d("DATA from ${nameOf(packet.senderId)} refused: the next link is slower than ${need.name}")
+        dispatch(Packet(PacketType.DATA_REFUSE, localNodeId, packet.senderId, random.nextInt(), DataFrame.encodeRefuse(packet.messageId, need)), originId = null)
     }
 
     /** True the first time a packet is seen. */
@@ -901,6 +937,224 @@ class MeshMessenger(
             if (attempt < ACK_ATTEMPTS - 1) delay(ACK_RETRY_DELAY_MS)
         }
         MeshLog.e("ACK to ${original.senderId.take(6)} failed after $ACK_ATTEMPTS attempts")
+    }
+
+    // ---------------------------------------------------------------- bulk transfers (voice clips)
+
+    /** The user's wish to always use the thinnest codec, whatever the link. */
+    @Volatile var voiceLowBandwidth: Boolean = false
+
+    private val assembler = TransferAssembler()
+    private val _transfers = MutableStateFlow<Map<String, Float>>(emptyMap())
+
+    /** Progress 0..1 of the transfers in flight: outgoing by message key, incoming by `in:<sender>:<transferId>`. */
+    val transfers: StateFlow<Map<String, Float>> = _transfers.asStateFlow()
+
+    private class Outgoing(val destId: String, val transferId: Int, val total: Int, val chunkIds: IntArray) {
+        val acked = BitSet(total)
+        val done = CompletableDeferred<Outcome>()
+    }
+
+    private sealed interface Outcome {
+        object Delivered : Outcome
+        class Refused(val needed: LinkClass) : Outcome
+    }
+
+    private val outgoing = HashMap<Int, Outgoing>()
+    private val outgoingByChunk = HashMap<Int, Outgoing>()
+    private val ackTimers = HashMap<String, Job>()
+
+    /** The slowest link class on the path to [destId], as far as this node knows it (see [LinkClass]). */
+    fun pathClass(destId: String): LinkClass {
+        val direct = transport.discoveredPeers.value.map { it.id }.toSet()
+        if (destId in direct) return transport.linkClassTo(destId)
+        routing.routeTo(destId, direct)?.let { return LinkClass.slowest(transport.linkClassTo(it.viaId), it.hopLink) }
+        // Unknown path: assume the best of our own links; a relay that cannot carry the transfer will say so.
+        return direct.map { transport.linkClassTo(it) }.maxByOrNull { it.code } ?: LinkClass.MEDIUM
+    }
+
+    /** The codec a clip to [destId] should be recorded with. */
+    fun voiceCodecFor(destId: String): VoiceCodec = BlobPolicy.voiceCodecFor(pathClass(destId), voiceLowBandwidth)
+
+    enum class SendBlobResult { STARTED, CODEC_NEEDS_FASTER_LINK, TOO_BIG, TOO_LONG, EMPTY }
+
+    /** Sends an already encoded clip. The checks are the ones a relay and the receiver repeat, so a refusal here is cheap. */
+    fun sendVoice(peerId: String, codec: VoiceCodec, durationMs: Int, audio: ByteArray): SendBlobResult {
+        val link = pathClass(peerId)
+        if (audio.isEmpty()) return SendBlobResult.EMPTY
+        if (durationMs > BlobPolicy.MAX_VOICE_SECONDS * 1000 + 500) return SendBlobResult.TOO_LONG
+        if (codec.minClass.code > link.code) return SendBlobResult.CODEC_NEEDS_FASTER_LINK
+        if (audio.size > BlobPolicy.maxBytes(BlobKind.VOICE, link)) return SendBlobResult.TOO_BIG
+        val transferId = random.nextInt()
+        val blobId = UUID.randomUUID().toString()
+        val message = ChatMessage(
+            messageId = transferId, peerId = peerId, peerName = nameOf(peerId), outgoing = true, text = "",
+            status = MessageStatus.SENDING, kind = MessageKind.VOICE, blobId = blobId, durationMs = durationMs, codec = codec.code
+        )
+        append(message)
+        count { it.copy(sent = it.sent + 1) }
+        scope.launch {
+            runCatching { blobStore.put(blobId, audio) }.onFailure { MeshLog.e("Could not keep the clip", it) }
+            runTransfer(message, link, audio)
+        }
+        return SendBlobResult.STARTED
+    }
+
+    private suspend fun runTransfer(message: ChatMessage, link: LinkClass, audio: ByteArray) {
+        val dest = message.peerId
+        val body = DataFrame.bodyBytes(link)
+        val chunks = audio.toList().chunked(body).map { it.toByteArray() }
+        val total = chunks.size
+        val need = BlobPolicy.needClass(BlobKind.VOICE, message.codec)
+        val out = Outgoing(dest, message.messageId, total, IntArray(total) { random.nextInt() })
+        outgoing[out.transferId] = out
+        out.chunkIds.forEach { outgoingByChunk[it] = out }
+        fun progress() = _transfers.update { it + (message.key to out.acked.cardinality().toFloat() / total) }
+        fun fail(note: String) {
+            setNote(message.key, note)
+            setStatus(message.key, MessageStatus.FAILED)
+        }
+        try {
+            var firstPass = true
+            var idleRounds = 0
+            while (true) {
+                for (i in 0 until total) {
+                    if (out.acked[i]) continue
+                    if (out.done.isCompleted) break
+                    val plain = DataFrame.encode(DataFrame.Chunk(BlobKind.VOICE, message.codec, message.durationMs, out.transferId, i, total, chunks[i]))
+                    val r = sealAndDispatchData(dest, plain, out.chunkIds[i], need) ?: return fail("No secure session")
+                    if (r.exceptionOrNull() is LinkTooSlowException) out.done.complete(Outcome.Refused(need))
+                }
+                if (firstPass) {
+                    firstPass = false
+                    setStatus(message.key, MessageStatus.SENT, onlyFrom = MessageStatus.SENDING)
+                }
+                val before = out.acked.cardinality()
+                val outcome = withTimeoutOrNull(ACK_WAIT_MS) { out.done.await() }
+                when (outcome) {
+                    Outcome.Delivered -> {
+                        _transfers.update { it - message.key }
+                        setStatus(message.key, MessageStatus.DELIVERED)
+                        return
+                    }
+                    is Outcome.Refused -> return fail("A link on the way is too slow (needs ${outcome.needed.name.lowercase()})")
+                    null -> Unit
+                }
+                progress()
+                if (out.acked.cardinality() > before) idleRounds = 0
+                else if (++idleRounds > MAX_IDLE_ROUNDS) return fail("No answer")
+                MeshLog.d("Clip to ${nameOf(dest)}: ${out.acked.cardinality()}/$total chunks acknowledged, sending the rest again")
+            }
+        } finally {
+            outgoing.remove(out.transferId)
+            out.chunkIds.forEach { outgoingByChunk.remove(it) }
+            _transfers.update { it - message.key }
+        }
+    }
+
+    private suspend fun sealAndDispatchData(destId: String, plain: ByteArray, messageId: Int, need: LinkClass): Result<Unit>? {
+        val session = ensureSession(destId) ?: return null
+        if (sessions.needsRotation(destId)) requestRotation(destId)
+        val sealed = Sealed.seal(session, plain, DataFrame.aad(localNodeId, destId, messageId, need))
+        sessions.noteSent(session)
+        return dispatch(
+            Packet(PacketType.DATA, localNodeId, destId, messageId, DataFrame.wrap(need, sealed)),
+            originId = null, expectReply = true, needClass = need
+        )
+    }
+
+    private fun setNote(key: String, note: String) {
+        var changed: ChatMessage? = null
+        _messages.update { list -> list.map { if (it.key == key) it.copy(note = note).also { u -> changed = u } else it } }
+        changed?.let(::persist)
+    }
+
+    private fun onData(packet: Packet, linkId: String) {
+        val need = DataFrame.needClassOf(packet.payload) ?: return
+        val inner = Packet(packet.type, packet.senderId, packet.destId, packet.messageId, DataFrame.sealedPart(packet.payload), packet.ttl, packet.hops)
+        val (_, plain) = open(inner, byteArrayOf(need.code.toByte())) ?: return
+        val chunk = DataFrame.decode(plain) ?: return
+        if (BlobPolicy.needClass(chunk.kind, chunk.codec) != need) {
+            MeshLog.e("DATA from ${nameOf(packet.senderId)} dropped: class byte does not fit its content")
+            return
+        }
+        noteLink(packet, linkId)
+        val now = clock()
+        val sender = packet.senderId
+        when (val r = assembler.accept(sender, chunk, now, packet.hops)) {
+            TransferAssembler.Result.Rejected -> MeshLog.e("DATA from ${nameOf(sender)} rejected")
+            is TransferAssembler.Result.AlreadyDone -> scope.launch { sendDataAck(sender, chunk.transferId, null) }
+            is TransferAssembler.Result.Progress -> {
+                val inc = r.incoming
+                val tkey = "in:$sender:${inc.transferId}"
+                _transfers.update { it + (tkey to inc.count.toFloat() / inc.total) }
+                ackTimers.remove(tkey)?.cancel()
+                if (r.ackNow && now - inc.lastAckAt >= ACK_MIN_INTERVAL_MS) {
+                    inc.lastAckAt = now
+                    scope.launch { sendDataAck(sender, inc.transferId, inc) }
+                }
+                // a gap that nothing fills: tell the sender what we hold after a quiet moment
+                ackTimers[tkey] = scope.launch {
+                    delay(IDLE_ACK_MS)
+                    assembler.find(sender, inc.transferId)?.let { sendDataAck(sender, inc.transferId, it) }
+                }
+            }
+            is TransferAssembler.Result.Complete -> {
+                val inc = r.incoming
+                val tkey = "in:$sender:${inc.transferId}"
+                ackTimers.remove(tkey)?.cancel()
+                _transfers.update { it - tkey }
+                if (inc.kind == BlobKind.VOICE) {
+                    val blobId = UUID.randomUUID().toString()
+                    count { it.copy(received = it.received + 1) }
+                    note(ActivityEvent.Kind.MESSAGE, "Voice message from ${nameOf(sender)}" + (if (packet.hops > 0) " via ${packet.hops} relay(s)" else ""), sender)
+                    scope.launch {
+                        runCatching { blobStore.put(blobId, r.bytes) }.onFailure { MeshLog.e("Could not keep the clip", it) }
+                        append(
+                            ChatMessage(
+                                messageId = inc.transferId, peerId = sender, peerName = nameOf(sender), outgoing = false, text = "",
+                                hops = packet.hops, status = MessageStatus.RECEIVED, kind = MessageKind.VOICE,
+                                blobId = blobId, durationMs = inc.durationMs, codec = inc.codec
+                            )
+                        )
+                    }
+                }
+                scope.launch { sendDataAck(sender, inc.transferId, inc) }
+            }
+        }
+    }
+
+    /** Sealed bitmap of what we hold (or "complete" when [inc] is null or full) to the author of a transfer. */
+    private suspend fun sendDataAck(sender: String, transferId: Int, inc: TransferAssembler.Incoming?) {
+        val session = sessions.sendSession(sender) ?: return
+        val plain = if (inc == null) DataFrame.encodeAck(transferId, true, BitSet(), 0)
+        else DataFrame.encodeAck(transferId, inc.complete, inc.received, inc.total)
+        val ackId = random.nextInt()
+        val sealed = Sealed.seal(session, plain, Packet.aad(PacketType.DATA_ACK, localNodeId, sender, ackId))
+        repeat(ACK_ATTEMPTS) { attempt ->
+            if (dispatch(Packet(PacketType.DATA_ACK, localNodeId, sender, ackId, sealed), originId = null).isSuccess) return
+            if (attempt < ACK_ATTEMPTS - 1) delay(ACK_RETRY_DELAY_MS)
+        }
+    }
+
+    private fun onDataAck(packet: Packet, linkId: String) {
+        val (_, plain) = open(packet) ?: return
+        val ack = DataFrame.decodeAck(plain) ?: return
+        val out = outgoing[ack.transferId]?.takeIf { it.destId == packet.senderId } ?: return
+        noteLink(packet, linkId)
+        if (ack.complete) out.acked.set(0, out.total) else out.acked.or(ack.received.get(0, out.total))
+        _messages.value.firstOrNull { it.outgoing && it.messageId == out.transferId && it.peerId == out.destId }?.let { m ->
+            _transfers.update { it + (m.key to out.acked.cardinality().toFloat() / out.total) }
+        }
+        if (out.acked.cardinality() == out.total) out.done.complete(Outcome.Delivered)
+    }
+
+    /** Unsealed, so anyone could forge one and stop a transfer; the worst it does is what jamming would do (see SECURITY.md). */
+    private fun onDataRefuse(packet: Packet) {
+        val refuse = DataFrame.decodeRefuse(packet.payload) ?: return
+        val out = outgoingByChunk[refuse.messageId] ?: return
+        MeshLog.d("DATA refused on the way to ${nameOf(out.destId)} by ${nameOf(packet.senderId)}")
+        out.done.complete(Outcome.Refused(refuse.needClass))
     }
 
     // ---------------------------------------------------------------- neighbour discovery
@@ -967,7 +1221,7 @@ class MeshMessenger(
                     continue
                 }
                 val others = peers.filter { it.id != target.id }
-                    .map { NodeAdvertisement.Info(it.id, it.displayName) }
+                    .map { HelloPayload.Entry(NodeAdvertisement.Info(it.id, it.displayName), transport.linkClassTo(it.id)) }
                 val messageId = random.nextInt()
                 val seq = ++session.helloSeqOut
                 val plain = ByteBuffer.allocate(Int.SIZE_BYTES).putInt(seq.toInt()).array() + HelloPayload.encode(others)
@@ -1016,3 +1270,6 @@ class MeshMessenger(
         }
     }
 }
+
+/** A bulk packet found no next link fast enough for it. */
+class LinkTooSlowException(val needed: LinkClass) : IllegalStateException("Needs a ${needed.name} link")
