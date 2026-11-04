@@ -191,30 +191,99 @@ internal fun VoiceBubble(vm: MainViewModel, m: ChatMessage, statusText: String?,
     }
 }
 
-/** The photo button of a one-to-one chat. */
+/** The three ways to get a photo: the camera, the photo library, any file. Registered once per chat screen. */
+internal class PhotoSources(val camera: () -> Unit, val gallery: () -> Unit, val files: () -> Unit)
+
 @Composable
-internal fun PhotoButton(vm: MainViewModel, peerId: String, enabled: Boolean) {
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) vm.photos.send(peerId, uri) }
-    Box(
-        Modifier.size(40.dp).background(TacticalAmber.copy(alpha = 0.14f), CircleShape).border(1.dp, TacticalAmber.copy(alpha = 0.6f), CircleShape)
-            .clickable(enabled = enabled) { picker.launch("image/*") },
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(Modifier.size(18.dp)) {
-            val c = TacticalAmber
-            drawRoundRect(c, Offset(0f, size.height * .12f), androidx.compose.ui.geometry.Size(size.width, size.height * .76f), androidx.compose.ui.geometry.CornerRadius(4f), style = androidx.compose.ui.graphics.drawscope.Stroke(2.2f))
-            drawCircle(c, size.width * .12f, Offset(size.width * .3f, size.height * .38f))
-            drawPath(Path().apply { moveTo(size.width * .08f, size.height * .8f); lineTo(size.width * .4f, size.height * .5f); lineTo(size.width * .6f, size.height * .7f); lineTo(size.width * .75f, size.height * .55f); lineTo(size.width * .95f, size.height * .8f) }, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.2f))
+internal fun rememberPhotoSources(vm: MainViewModel, peerId: String?): PhotoSources {
+    val context = LocalContext.current
+    val target = androidx.compose.runtime.rememberUpdatedState(peerId)
+    var pending by remember { androidx.compose.runtime.mutableStateOf<java.io.File?>(null) }
+    val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        com.nodewave.mesh.transport.MeshLog.d("Gallery returned $uri")
+        val id = target.value
+        if (uri != null && id != null) vm.photos.send(id, uri)
+    }
+    val files = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        com.nodewave.mesh.transport.MeshLog.d("File picker returned $uri")
+        val id = target.value
+        if (uri != null && id != null) vm.photos.send(id, uri)
+    }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val file = pending
+        com.nodewave.mesh.transport.MeshLog.d("Camera returned ok=$ok file=${file?.length()}")
+        val id = target.value
+        if (ok && file != null && id != null) vm.photos.send(id, androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file), deleteAfter = file)
+        else file?.delete()
+        pending = null
+    }
+    fun takePhoto() {
+        val dir = java.io.File(context.cacheDir, "camera").apply { mkdirs() }
+        val file = java.io.File.createTempFile("shot", ".jpg", dir)
+        pending = file
+        camera.launch(androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file))
+    }
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) takePhoto() else vm.voice.postNotice("The camera needs its permission")
+    }
+    return remember(camera, gallery, files, cameraPermission) {
+        PhotoSources(
+            camera = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) takePhoto()
+                else cameraPermission.launch(Manifest.permission.CAMERA)
+            },
+            gallery = { gallery.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            files = { files.launch(arrayOf("image/*")) }
+        )
+    }
+}
+
+/** The photo button of a one-to-one chat: a small menu with the three sources. */
+@Composable
+internal fun PhotoButton(sources: PhotoSources, enabled: Boolean) {
+    var open by remember { androidx.compose.runtime.mutableStateOf(false) }
+    Box {
+        Box(
+            Modifier.size(40.dp).background(TacticalAmber.copy(alpha = 0.14f), CircleShape).border(1.dp, TacticalAmber.copy(alpha = 0.6f), CircleShape)
+                .clickable(enabled = enabled) { open = true },
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(Modifier.size(18.dp)) {
+                val c = TacticalAmber
+                drawRoundRect(c, Offset(0f, size.height * .12f), androidx.compose.ui.geometry.Size(size.width, size.height * .76f), androidx.compose.ui.geometry.CornerRadius(4f), style = androidx.compose.ui.graphics.drawscope.Stroke(2.2f))
+                drawCircle(c, size.width * .12f, Offset(size.width * .3f, size.height * .38f))
+                drawPath(Path().apply { moveTo(size.width * .08f, size.height * .8f); lineTo(size.width * .4f, size.height * .5f); lineTo(size.width * .6f, size.height * .7f); lineTo(size.width * .75f, size.height * .55f); lineTo(size.width * .95f, size.height * .8f) }, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.2f))
+            }
+        }
+        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = TacticalSurfaceHigh) {
+            listOf("Camera" to sources.camera, "Photo library" to sources.gallery, "Files" to sources.files).forEach { (label, action) ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(label, color = TacticalText, fontFamily = Mono, fontSize = 13.sp) },
+                    onClick = { open = false; action() }
+                )
+            }
         }
     }
+}
+
+/** The line above the composer while a photo is being prepared. */
+@Composable
+internal fun PhotoStage(vm: MainViewModel) {
+    val stage by vm.photos.stage.collectAsStateWithLifecycle()
+    stage?.let { Text("◌ $it", color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)) }
 }
 
 @Composable
 internal fun ImageBubble(vm: MainViewModel, m: ChatMessage, statusText: String?, statusColor: Color) {
     val transfers by vm.transfers.collectAsStateWithLifecycle()
     val progress = transfers[m.key] ?: transfers["in:${m.peerId}:${m.messageId}"]
-    val image by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, m.blobId) {
-        value = m.blobId?.let { vm.loadImage(it, 720) }?.asImageBitmap()
+    // an outgoing photo is shown before its bytes are written: look again a few times
+    val image by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, m.blobId, m.status) {
+        repeat(6) {
+            value = m.blobId?.let { vm.loadImage(it, 720) }?.asImageBitmap()
+            if (value != null) return@produceState
+            kotlinx.coroutines.delay(400)
+        }
     }
     var full by remember { androidx.compose.runtime.mutableStateOf(false) }
     val outgoing = m.outgoing

@@ -1,6 +1,6 @@
 # NodeWave security notes
 
-Status: **v0.12.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
+Status: **v0.12.1, not independently audited.** The design uses only standard, well-reviewed primitives from the
 Java/Android platform (no custom cryptography, no third-party crypto libraries), but nobody outside this project
 has reviewed it. Do not rely on it where lives or liberty depend on it.
 

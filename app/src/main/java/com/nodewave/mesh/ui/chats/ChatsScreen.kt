@@ -163,6 +163,7 @@ private fun ConversationView(vm: MainViewModel, key: String, summary: Conversati
     val title = group?.name ?: node?.name ?: summary?.title ?: id.take(6)
     var info by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
+    val photoSources = rememberPhotoSources(vm, if (isGroup) null else id)
 
     val personal = remember(messages, id) { if (isGroup) emptyList() else messages.filter { it.groupId == null && it.peerId == id } }
     val lines = remember(messages, id) { if (isGroup) groupTimeline(messages, id) else emptyList() }
@@ -218,11 +219,12 @@ private fun ConversationView(vm: MainViewModel, key: String, summary: Conversati
             val recording by vm.voice.recording.collectAsStateWithLifecycle()
             val voiceSettings by vm.settings.collectAsStateWithLifecycle()
             VoiceNotice(vm)
+            PhotoStage(vm)
             Composer(
                 recording = if (recording !is com.nodewave.mesh.Recording.Idle) ({ mod -> RecordingBar(vm, voiceSettings.voiceHoldToRecord, mod) }) else null,
                 enabled = state == TransportState.ACTIVE, placeholder = "Message $title",
                 mic = if (isGroup) null else ({ MicButton(vm, id, state == TransportState.ACTIVE) }),
-                photo = if (isGroup) null else ({ PhotoButton(vm, id, state == TransportState.ACTIVE) }),
+                photo = if (isGroup) null else ({ PhotoButton(photoSources, state == TransportState.ACTIVE) }),
                 maxBytes = if (isGroup) GroupCodec.MAX_TEXT_BYTES else MeshMessenger.MAX_TEXT_BYTES,
                 onPing = if (isGroup) null else ({ vm.pingPeer(id) }),
                 onSend = { text -> if (isGroup) vm.sendGroupText(id, text) else vm.sendToPeer(id, text) }

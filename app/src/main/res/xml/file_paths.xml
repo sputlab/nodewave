@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- where the camera app writes the picture it takes for NodeWave; cleaned when the photo has been read -->
+    <cache-path name="camera" path="camera/" />
+</paths>

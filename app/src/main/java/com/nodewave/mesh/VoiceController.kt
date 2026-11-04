@@ -176,7 +176,7 @@ class VoiceController(
     }
 }
 
-/** Picking, shrinking and sending photos; shows what it is waiting for through the same notice line as voice. */
+/** Shrinking and sending photos; the stage line says what it is waiting for, the notice line what went wrong. */
 class PhotoController(
     private val scope: CoroutineScope,
     private val messenger: MeshMessenger,
@@ -187,45 +187,63 @@ class PhotoController(
         override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.byteCount
     }
 
-    fun send(peerId: String, uri: android.net.Uri) = launch(peerId) { target, maxSide ->
-        runCatching { com.nodewave.mesh.audio.ImageCompressor.compress(context, uri, target, maxSide) }.getOrNull()
+    private val _stage = MutableStateFlow<String?>(null)
+    /** What a photo in preparation is doing right now ("Opening a Wi-Fi Direct link…"); null when idle. */
+    val stage: StateFlow<String?> = _stage.asStateFlow()
+
+    fun send(peerId: String, uri: android.net.Uri, deleteAfter: java.io.File? = null) {
+        MeshLog.d("Photo chosen: $uri")
+        launch(peerId, deleteAfter) { target, maxSide ->
+            runCatching { com.nodewave.mesh.audio.ImageCompressor.compress(context, uri, target, maxSide) }
+                .onFailure { MeshLog.e("Photo could not be read", it) }.getOrNull()
+        }
     }
 
-    /** A synthetic picture (a diagnostic: it needs no photo on the phone) of about [sizeHint] pixels on its longest side. */
-    fun sendTest(peerId: String) = launch(peerId) { target, maxSide ->
-        val side = maxSide
-        val bmp = android.graphics.Bitmap.createBitmap(side, side * 3 / 4, android.graphics.Bitmap.Config.ARGB_8888)
+    /** A synthetic picture (a diagnostic: it needs no photo on the phone). */
+    fun sendTest(peerId: String) = launch(peerId, null) { target, maxSide ->
+        val bmp = android.graphics.Bitmap.createBitmap(maxSide, maxSide * 3 / 4, android.graphics.Bitmap.Config.ARGB_8888)
         val rnd = java.util.Random(7)
         val c = android.graphics.Canvas(bmp)
         val p = android.graphics.Paint()
         for (i in 0 until 400) {
             p.color = android.graphics.Color.rgb(rnd.nextInt(256), rnd.nextInt(256), rnd.nextInt(256))
-            val x = rnd.nextInt(bmp.width); val y = rnd.nextInt(bmp.height)
-            c.drawCircle(x.toFloat(), y.toFloat(), (10 + rnd.nextInt(bmp.width / 8)).toFloat(), p)
+            c.drawCircle(rnd.nextInt(bmp.width).toFloat(), rnd.nextInt(bmp.height).toFloat(), (10 + rnd.nextInt(bmp.width / 8)).toFloat(), p)
         }
         com.nodewave.mesh.audio.ImageCompressor.fit(bmp, target, maxSide)
     }
 
-    private fun launch(peerId: String, makeJpeg: (Int, Int) -> ByteArray?) {
+    private fun launch(peerId: String, deleteAfter: java.io.File?, makeJpeg: (Int, Int) -> ByteArray?) {
         scope.launch(Dispatchers.Default) {
-            var link = messenger.pathClass(peerId)
-            if (messenger.fastLinkAvailable && link != com.nodewave.mesh.protocol.LinkClass.FAST) {
-                notify("Opening a Wi-Fi Direct link for the photo…")
-                messenger.upgradeLink(peerId)
-                link = messenger.pathClass(peerId)
-                if (link != com.nodewave.mesh.protocol.LinkClass.FAST) notify("No Wi-Fi Direct link: sending a small photo over Bluetooth")
-            }
-            val target = BlobPolicy.imageTargetBytes(link)
-            if (target == 0) { notify("Photos need Bluetooth or a faster link"); return@launch }
-            val maxSide = if (link == com.nodewave.mesh.protocol.LinkClass.FAST) 1600 else 640
-            val bytes = makeJpeg(target, maxSide)
-            if (bytes == null) { notify("Could not read that photo"); return@launch }
-            MeshLog.d("Photo shrunk to ${bytes.size} bytes for a ${link.name} link")
-            when (messenger.sendImage(peerId, bytes)) {
-                MeshMessenger.SendBlobResult.STARTED -> Unit
-                MeshMessenger.SendBlobResult.TOO_BIG -> notify("The photo is too big for this link")
-                MeshMessenger.SendBlobResult.CODEC_NEEDS_FASTER_LINK -> notify("Photos need Bluetooth or a faster link")
-                else -> notify("The photo could not be sent")
+            try {
+                _stage.value = "Preparing the photo…"
+                var link = messenger.pathClass(peerId)
+                MeshLog.d("Photo: path class $link, fast link available=${messenger.fastLinkAvailable}")
+                if (messenger.fastLinkAvailable && link != com.nodewave.mesh.protocol.LinkClass.FAST) {
+                    _stage.value = "Opening a Wi-Fi Direct link…"
+                    val ok = messenger.upgradeLink(peerId)
+                    link = messenger.pathClass(peerId)
+                    MeshLog.d("Photo: Wi-Fi Direct upgrade ok=$ok, class now $link")
+                    if (link != com.nodewave.mesh.protocol.LinkClass.FAST) notify("No Wi-Fi Direct link: the photo goes small, over Bluetooth")
+                }
+                val target = BlobPolicy.imageTargetBytes(link)
+                if (target == 0) { notify("Photos need Bluetooth or a faster link"); return@launch }
+                _stage.value = "Shrinking the photo…"
+                val maxSide = if (link == com.nodewave.mesh.protocol.LinkClass.FAST) 1600 else 640
+                val bytes = makeJpeg(target, maxSide)
+                if (bytes == null) { notify("Could not read that photo"); return@launch }
+                MeshLog.d("Photo shrunk to ${bytes.size} bytes for a ${link.name} link")
+                when (val r = messenger.sendImage(peerId, bytes)) {
+                    MeshMessenger.SendBlobResult.STARTED -> Unit
+                    MeshMessenger.SendBlobResult.TOO_BIG -> notify("The photo is too big for this link")
+                    MeshMessenger.SendBlobResult.CODEC_NEEDS_FASTER_LINK -> notify("Photos need Bluetooth or a faster link")
+                    else -> notify("The photo could not be sent ($r)")
+                }
+            } catch (e: Exception) {
+                MeshLog.e("Photo send failed", e)
+                notify("The photo could not be sent")
+            } finally {
+                _stage.value = null
+                deleteAfter?.delete()
             }
         }
     }

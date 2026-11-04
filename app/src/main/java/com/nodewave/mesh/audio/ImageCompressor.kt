@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
+import com.nodewave.mesh.transport.MeshLog
 import java.io.ByteArrayOutputStream
 
 /** Shrinks a photo to a JPEG of about [targetBytes]. The result has no EXIF at all, so no location or camera data leaves the phone. */
@@ -13,13 +14,16 @@ object ImageCompressor {
     fun compress(context: Context, uri: Uri, targetBytes: Int, maxSide: Int): ByteArray? {
         val resolver = context.contentResolver
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        // with inJustDecodeBounds the decoder returns no bitmap: the size is in [bounds]
+        val input = resolver.openInputStream(uri) ?: run { MeshLog.e("Photo $uri could not be opened"); return null }
+        input.use { BitmapFactory.decodeStream(it, null, bounds) }
+        MeshLog.d("Photo bounds ${bounds.outWidth}x${bounds.outHeight}, target $targetBytes bytes, max side $maxSide")
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
         val decoded = resolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-        } ?: return null
+        } ?: run { MeshLog.e("Photo could not be decoded"); return null }
         val rotation = runCatching {
             resolver.openInputStream(uri)?.use { ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL) }
         }.getOrNull() ?: ExifInterface.ORIENTATION_NORMAL
@@ -36,6 +40,7 @@ object ImageCompressor {
                 val out = ByteArrayOutputStream()
                 scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
                 if (out.size() <= targetBytes) return out.toByteArray()
+                MeshLog.d("Photo at ${scaled.width}x${scaled.height} quality $quality is ${out.size()} bytes, too big")
             }
             side = (side * 0.8).toInt()
             if (scaled !== bitmap) scaled.recycle()

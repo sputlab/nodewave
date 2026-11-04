@@ -5,6 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-04
+
+Photos from the camera, the photo library and files, and the fix that made every real photo fail.
+
+### Fixed
+- **Every photo picked from a gallery or file was silently refused** ("Could not read that photo", shown for four seconds): the size check took the empty result of a bounds-only decode for an unreadable file. Only the synthetic test photo, which skips that step, got through. Fixed; a 16-megapixel photo is now shrunk to 130-250 KB for a fast link and sent.
+- A photo shown in the chat right after sending stayed a grey placeholder: it was looked up before its bytes were written. It now looks again.
+
+### Changed
+- The photo button opens a small menu: **Camera**, **Photo library** (the system photo picker) and **Files**. The camera shot is handed over through a private file provider and deleted once read; the camera permission is asked when first needed.
+- While a photo is prepared a line above the message field says what is going on (preparing, opening a Wi-Fi Direct link, shrinking) instead of a notice that disappears after four seconds; each step is also logged.
+
 ## [0.12.0] - 2026-11-04
 
 A fast Wi-Fi Direct link for big transfers, and photos.
