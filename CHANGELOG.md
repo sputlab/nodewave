@@ -5,6 +5,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-04
+
+Codec2 for slow links.
+
+### Added
+- **Codec2** (modes 700C, 1300, 2400, 3200 bit/s) for voice messages, next to Opus. The sender picks the codec from the slowest link on the path (see 0.10.0) or always the thinnest one if *Always low bandwidth* is on; a 15 s clip is about 1.3 KB with 700C and 4.5 KB with 2400 against about 15 KB with Opus 8k. A phone needs no setting: it plays whatever codec the clip names.
+- The Codec2 C sources (version 1.2.0, LGPL-2.1, compatible with the GPL-3.0) are in `app/src/main/cpp/codec2` with their licence and a note on how they were taken, built into a small separate library `libnodewave_codec2.so` through the NDK and CMake (`app/src/main/cpp`). Checked on the Mi Note 10, Honor View 10 and Samsung A52: the four modes encode and decode with the same results as the upstream library on a computer, and a clip sent over Bluetooth with CODEC2 2400 from the Mi was delivered and played on the Samsung.
+
+### Changed
+- Building the app now needs the NDK (27.2) and CMake 3.22.1 from the Android SDK; Android Studio offers to install them.
+
 ## [0.10.0] - 2026-11-04
 
 Voice messages and the bulk-transfer layer underneath them. Checked on the Mi Note 10, Honor View 10 and Samsung A52: Opus encodes and decodes on all three, and a 3.9 s clip (3.3 KB) went from the Mi to the Samsung over Bluetooth in about 4 seconds and played. Not yet tried: a clip from or to the Honor, across a relay, and Codec2.

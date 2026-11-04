@@ -17,7 +17,7 @@ object SpeechCodecs {
     /** The codec for [codec], or null if this phone cannot do it. */
     fun forCodec(codec: VoiceCodec): SpeechCodec? =
         if (codec.isOpus) OpusSpeechCodec.takeIf { OpusSpeechCodec.available }?.let { OpusSpeechCodec(codec.bitsPerSecond) }
-        else null
+        else Codec2SpeechCodec(codec).takeIf { Codec2SpeechCodec.available }
 
     fun available(codec: VoiceCodec): Boolean = forCodec(codec) != null
 }
