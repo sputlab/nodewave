@@ -108,24 +108,24 @@ internal fun MicButton(vm: MainViewModel, peerId: String, enabled: Boolean) {
 
 /** Replaces the composer while recording, and after recording in tap mode. */
 @Composable
-internal fun RecordingBar(vm: MainViewModel, hold: Boolean) {
+internal fun RecordingBar(vm: MainViewModel, hold: Boolean, modifier: Modifier = Modifier) {
     val rec by vm.voice.recording.collectAsStateWithLifecycle()
     val max = BlobPolicy.MAX_VOICE_SECONDS * 1000
     when (val r = rec) {
         Recording.Idle -> Unit
-        is Recording.Active -> Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        is Recording.Active -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(12.dp).background(TacticalRed, CircleShape))
             Text("${mmss(r.elapsedMs)} / ${mmss(max)}", color = TacticalText, fontFamily = Mono, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Box(Modifier.weight(1f).height(8.dp).background(TacticalLine, RoundedCornerShape(4.dp))) {
                 Box(Modifier.fillMaxWidth(0.05f + 0.95f * r.level).height(8.dp).background(TacticalGreen, RoundedCornerShape(4.dp)))
             }
-            if (hold) Text("‹ slide to cancel", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
+            if (hold) Text("‹ slide", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
             else {
-                TacButton("Cancel", { vm.voice.cancel() }, kind = TacKind.DANGER, small = true)
+                TacButton("✕", { vm.voice.cancel() }, kind = TacKind.DANGER, small = true)
                 TacButton("Stop", { vm.voice.stop() }, kind = TacKind.PRIMARY, small = true)
             }
         }
-        is Recording.Ready -> Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        is Recording.Ready -> Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Clip ${mmss(r.durationMs)}", color = TacticalText, fontFamily = Mono, fontSize = 13.sp, modifier = Modifier.weight(1f))
             TacButton("Discard", { vm.voice.discardReady() }, kind = TacKind.DANGER, small = true)
             TacButton("Send", { vm.voice.sendReady() }, kind = TacKind.PRIMARY, small = true)

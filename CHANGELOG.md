@@ -5,13 +5,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
-Voice messages and the bulk-transfer layer underneath them (not yet tried on the phones).
+## [0.10.0] - 2026-11-04
+
+Voice messages and the bulk-transfer layer underneath them. Checked on the Mi Note 10, Honor View 10 and Samsung A52: Opus encodes and decodes on all three, and a 3.9 s clip (3.3 KB) went from the Mi to the Samsung over Bluetooth in about 4 seconds and played. Not yet tried: a clip from or to the Honor, across a relay, and Codec2.
 
 ### Added
 - **Link classes** (`LinkClass`: slow, medium, fast). A transport says what kind of link it has to each peer; HELLO packets now carry that class for every neighbour, so a node knows the slowest link of a two-hop route. The sender picks codec and size for the slowest link it knows.
 - **Bulk transfers** (`DataFrame`, packet types `DATA`, `DATA_ACK`, `DATA_REFUSE`): a blob is cut into chunks sealed one by one with the pairwise session, the receiver answers with a bitmap every eight chunks and after a quiet moment, and the sender sends again what is missing. A byte in front of each chunk (bound into the sealed data) tells relays what class of link the transfer needs: a relay whose next link is slower refuses it and tells the author, which stops and says why. A receiver limits transfers in number, size and age.
-- **Voice messages** in one-to-one chats: record (hold the microphone, or tap, tap, send; Settings), at most 15 seconds, play in the chat, with progress and delivery state. Audio is kept encrypted at rest like message text, in its own files, and deleted with the history. Opus through the phone's MediaCodec for Bluetooth links; the Codec2 modes for slow links are defined but need the native library, still to come. Settings: record mode, "always low bandwidth", and a codec test.
+- **Voice messages** in one-to-one chats: record (hold the microphone, or tap, tap, send; Settings), at most 15 seconds, play in the chat, with progress and delivery state. Audio is kept encrypted at rest like message text, in its own files, and deleted with the history. Opus through the phone's MediaCodec for Bluetooth links (decoded at 48 kHz by Android and brought back to 8 kHz); the Codec2 modes for slow links are defined but need the native library, still to come. Settings: record mode, "always low bandwidth", and a codec test.
 - Tests: chunk framing, reassembly limits, resend after a lost chunk, relays across mixed links (a thin codec passes a slow link, Opus is refused), class learned from HELLO.
+
+### Fixed
+- The microphone button keeps its place in the chat row while recording, so the press that ends a hold-to-record clip is not lost.
 
 ### Changed
 - HELLO entries have a link-class byte (the wire format changed; update all phones together).

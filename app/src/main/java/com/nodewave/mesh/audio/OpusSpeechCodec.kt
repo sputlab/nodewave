@@ -99,6 +99,7 @@ class OpusSpeechCodec(private val bitsPerSecond: Int) : SpeechCodec {
         }
         val codec = MediaCodec.createDecoderByType(MIME)
         val pcm = ByteArrayOutputStream()
+        var outRate = 48_000
         try {
             codec.configure(format, null, null, 0)
             codec.start()
@@ -134,6 +135,7 @@ class OpusSpeechCodec(private val bitsPerSecond: Int) : SpeechCodec {
                     codec.releaseOutputBuffer(o, false)
                 } else if (o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                     MeshLog.d("Opus decoder output format: ${codec.outputFormat}")
+                    outRate = runCatching { codec.outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) }.getOrDefault(outRate)
                 }
             }
         } catch (e: Exception) {
@@ -144,9 +146,20 @@ class OpusSpeechCodec(private val bitsPerSecond: Int) : SpeechCodec {
             codec.release()
         }
         val raw = pcm.toByteArray()
-        val out = ShortArray(raw.size / 2)
-        ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(out)
-        return out
+        val all = ShortArray(raw.size / 2)
+        ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(all)
+        return downsample(all, outRate)
+    }
+
+    /** Opus decodes at 48 kHz on Android whatever was encoded; speech is played at 8 kHz, so average each group of samples. */
+    private fun downsample(pcm: ShortArray, rate: Int): ShortArray {
+        val ratio = rate / SPEECH_SAMPLE_RATE
+        if (ratio <= 1) return pcm
+        return ShortArray(pcm.size / ratio) { i ->
+            var sum = 0
+            for (k in 0 until ratio) sum += pcm[i * ratio + k]
+            (sum / ratio).toShort()
+        }
     }
 
     /** OpusHead for mono at 8 kHz, in case a phone's encoder gives none. */

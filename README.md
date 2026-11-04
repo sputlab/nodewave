@@ -4,7 +4,7 @@
 
 Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.9.2** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
+**Status: v0.10.0** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
 
 ## Screenshots
 
@@ -23,7 +23,7 @@ Off-grid mesh walkie-talkie for Android. Phones talk to each other directly over
 
 Taken on real phones talking over Bluetooth (the two nodes on the map are given a fixed position on a hiking trail for the picture). Website: [nodewave.org](https://nodewave.org) (source in [`docs/`](docs/SITE.md)).
 
-## Features (v0.9.2)
+## Features (v0.10.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Identity key pair per install; the node ID is derived from the public key, so peers are recognised even when BLE addresses rotate and an ID cannot be claimed by someone without the key.
@@ -33,6 +33,7 @@ Taken on real phones talking over Bluetooth (the two nodes on the map are given 
 - **Verified contacts:** scan someone's QR code in person to confirm who a node ID belongs to; its key is then pinned.
 - **Group chat** for up to 8 people, end-to-end encrypted per member (no shared group key), with an admin who manages the member list.
 - **Position sharing and offline map:** share where you are with nobody, verified contacts or everyone in range; see nodes on an offline map (vector Mapsforge files, one file for a whole country, downloadable in the app). LoRa board settings are prepared for the USB boards coming later.
+- **Voice messages** (up to 15 s) in one-to-one chats, sent as encrypted chunks with resend and delivery confirmation; Opus over Bluetooth, links are classed slow/medium/fast so a relay refuses what its next link cannot carry.
 - Persistent chat history (message text encrypted at rest with the Android Keystore) with a CLEAR button.
 - Live list of nodes: direct ones with signal strength (RSSI, dBm), indirect ones as `via <neighbour>`.
 - Multi-hop relay with TTL and duplicate suppression; delivery ACKs travel back across the relays.

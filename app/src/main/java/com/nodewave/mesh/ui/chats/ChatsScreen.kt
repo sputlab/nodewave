@@ -218,8 +218,8 @@ private fun ConversationView(vm: MainViewModel, key: String, summary: Conversati
             val recording by vm.voice.recording.collectAsStateWithLifecycle()
             val voiceSettings by vm.settings.collectAsStateWithLifecycle()
             VoiceNotice(vm)
-            if (recording !is com.nodewave.mesh.Recording.Idle) RecordingBar(vm, voiceSettings.voiceHoldToRecord)
-            else Composer(
+            Composer(
+                recording = if (recording !is com.nodewave.mesh.Recording.Idle) ({ mod -> RecordingBar(vm, voiceSettings.voiceHoldToRecord, mod) }) else null,
                 enabled = state == TransportState.ACTIVE, placeholder = "Message $title",
                 mic = if (isGroup) null else ({ MicButton(vm, id, state == TransportState.ACTIVE) }),
                 maxBytes = if (isGroup) GroupCodec.MAX_TEXT_BYTES else MeshMessenger.MAX_TEXT_BYTES,
@@ -292,18 +292,19 @@ private fun Bubble(outgoing: Boolean, sender: String?, senderId: String, text: S
 }
 
 @Composable
-private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPing: (() -> Unit)?, onSend: (String) -> Boolean, mic: (@Composable () -> Unit)? = null) {
+private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPing: (() -> Unit)?, onSend: (String) -> Boolean, mic: (@Composable () -> Unit)? = null, recording: (@Composable (Modifier) -> Unit)? = null) {
     var text by remember { mutableStateOf("") }
     fun send() { if (text.isNotBlank() && onSend(text)) text = "" }
     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TacTextField(
+        // the microphone button keeps its place in this row while recording: it owns the press that ends the clip
+        if (recording != null) recording(Modifier.weight(1f)) else TacTextField(
             text, { if (it.toByteArray(Charsets.UTF_8).size <= maxBytes) text = it }, Modifier.weight(1f),
             placeholder = if (enabled) placeholder else "Radio is off", enabled = true,
             imeAction = androidx.compose.ui.text.input.ImeAction.Send, onImeAction = { if (enabled) send() }
         )
-        if (onPing != null) TacButton("Ping", onPing, enabled = enabled, kind = TacKind.AMBER, small = true)
-        if (mic != null && text.isBlank()) mic()
-        TacButton("Send", ::send, enabled = enabled && text.isNotBlank(), kind = TacKind.PRIMARY, small = true)
+        if (recording == null && onPing != null) TacButton("Ping", onPing, enabled = enabled, kind = TacKind.AMBER, small = true)
+        if (mic != null && (text.isBlank() || recording != null)) mic()
+        if (recording == null) TacButton("Send", ::send, enabled = enabled && text.isNotBlank(), kind = TacKind.PRIMARY, small = true)
     }
 }
 
