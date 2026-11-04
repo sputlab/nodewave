@@ -78,7 +78,7 @@ fun conversations(
         val key = Conversation.personalKey(peer)
         val last = list.maxByOrNull { it.time }!!
         out += Conversation(
-            key, nameOf(peer), peer, null, last.text, last.time, last.outgoing, last.status,
+            key, nameOf(peer), peer, null, last.preview(), last.time, last.outgoing, last.status,
             unread = list.count { !it.outgoing && !it.isPing && it.time > (lastRead[key] ?: 0L) },
             invited = false, memberCount = 2
         )

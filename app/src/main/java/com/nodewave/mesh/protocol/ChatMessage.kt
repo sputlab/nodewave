@@ -4,7 +4,14 @@ import java.util.UUID
 
 enum class MessageStatus { SENDING, SENT, DELIVERED, FAILED, RECEIVED }
 
-enum class MessageKind { TEXT, VOICE }
+enum class MessageKind { TEXT, VOICE, IMAGE }
+
+/** What a conversation list shows for a message. */
+fun ChatMessage.preview(): String = when (kind) {
+    MessageKind.TEXT -> text
+    MessageKind.VOICE -> "Voice message " + "%d:%02d".format(durationMs / 60_000, durationMs / 1000 % 60)
+    MessageKind.IMAGE -> "Photo"
+}
 
 data class ChatMessage(
     val key: String = UUID.randomUUID().toString(),

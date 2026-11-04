@@ -77,6 +77,29 @@ internal class FakeNetwork(private val clock: () -> Long = { 0L }) {
         val linkClasses = mutableMapOf<String, LinkClass>()
         override fun linkClassTo(peerId: String): LinkClass = linkClasses[peerId] ?: LinkClass.MEDIUM
 
+        /** A pretend Wi-Fi Direct: joining makes the link between the two nodes fast on both ends, closing makes it medium again. */
+        var fastEnabled = false
+        var joinSucceeds = true
+        val offersHosted = mutableListOf<String>()
+        val joined = mutableListOf<String>()
+        override val fastLink: com.nodewave.mesh.transport.FastLinkTransport? get() = if (!fastEnabled) null else object : com.nodewave.mesh.transport.FastLinkTransport {
+            override suspend fun host(peerId: String): com.nodewave.mesh.transport.LinkOffer? {
+                offersHosted += peerId
+                return com.nodewave.mesh.transport.LinkOffer("DIRECT-nw-${id.takeLast(4)}", "pass-${id.takeLast(8)}", 4040)
+            }
+            override suspend fun join(peerId: String, offer: com.nodewave.mesh.transport.LinkOffer): Boolean {
+                if (!joinSucceeds) return false
+                joined += peerId
+                linkClasses[peerId] = LinkClass.FAST
+                transports.getValue(peerId).linkClasses[id] = LinkClass.FAST
+                return true
+            }
+            override fun close(peerId: String) {
+                linkClasses[peerId] = LinkClass.MEDIUM
+                transports.getValue(peerId).linkClasses[id] = LinkClass.MEDIUM
+            }
+        }
+
         /** While true, low-priority sends are refused as if the radio were in use. */
         @Volatile var busy = false
         var lowPrioritySends = 0

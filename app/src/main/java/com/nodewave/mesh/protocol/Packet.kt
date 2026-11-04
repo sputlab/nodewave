@@ -26,7 +26,10 @@ enum class PacketType(val code: Int) {
     DATA_ACK(9),
 
     /** A relay telling the author that it cannot forward a transfer over its next link; unsealed, see [DataFrame]. */
-    DATA_REFUSE(10);
+    DATA_REFUSE(10),
+
+    /** Negotiation of a fast link (Wi-Fi Direct group) between two neighbours; sealed, see [LinkCodec]. */
+    LINK(11);
 
     companion object {
         fun fromCode(code: Int): PacketType? = entries.firstOrNull { it.code == code }

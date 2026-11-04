@@ -50,6 +50,9 @@ interface MeshTransport {
 
     /** What kind of link this transport has to [peerId]; a transport with a single kind of radio just returns it. */
     fun linkClassTo(peerId: String): LinkClass = LinkClass.MEDIUM
+
+    /** The fast second radio, if this phone has one. */
+    val fastLink: FastLinkTransport? get() = null
 }
 
 /** A low-priority send was skipped because the radio was busy; safe to retry later. */

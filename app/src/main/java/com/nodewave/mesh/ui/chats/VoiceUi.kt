@@ -26,10 +26,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -185,5 +188,61 @@ internal fun VoiceBubble(vm: MainViewModel, m: ChatMessage, statusText: String?,
                 Text(clock(m.time), color = TacticalDim, fontFamily = Mono, fontSize = 9.sp)
             }
         }
+    }
+}
+
+/** The photo button of a one-to-one chat. */
+@Composable
+internal fun PhotoButton(vm: MainViewModel, peerId: String, enabled: Boolean) {
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri -> if (uri != null) vm.photos.send(peerId, uri) }
+    Box(
+        Modifier.size(40.dp).background(TacticalAmber.copy(alpha = 0.14f), CircleShape).border(1.dp, TacticalAmber.copy(alpha = 0.6f), CircleShape)
+            .clickable(enabled = enabled) { picker.launch("image/*") },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(18.dp)) {
+            val c = TacticalAmber
+            drawRoundRect(c, Offset(0f, size.height * .12f), androidx.compose.ui.geometry.Size(size.width, size.height * .76f), androidx.compose.ui.geometry.CornerRadius(4f), style = androidx.compose.ui.graphics.drawscope.Stroke(2.2f))
+            drawCircle(c, size.width * .12f, Offset(size.width * .3f, size.height * .38f))
+            drawPath(Path().apply { moveTo(size.width * .08f, size.height * .8f); lineTo(size.width * .4f, size.height * .5f); lineTo(size.width * .6f, size.height * .7f); lineTo(size.width * .75f, size.height * .55f); lineTo(size.width * .95f, size.height * .8f) }, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2.2f))
+        }
+    }
+}
+
+@Composable
+internal fun ImageBubble(vm: MainViewModel, m: ChatMessage, statusText: String?, statusColor: Color) {
+    val transfers by vm.transfers.collectAsStateWithLifecycle()
+    val progress = transfers[m.key] ?: transfers["in:${m.peerId}:${m.messageId}"]
+    val image by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, m.blobId) {
+        value = m.blobId?.let { vm.loadImage(it, 720) }?.asImageBitmap()
+    }
+    var full by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val outgoing = m.outgoing
+    val shape = RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp, bottomStart = if (outgoing) 14.dp else 3.dp, bottomEnd = if (outgoing) 3.dp else 14.dp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (outgoing) Arrangement.End else Arrangement.Start) {
+        Column(
+            Modifier.widthIn(max = 260.dp).background(if (outgoing) TacticalGreen.copy(alpha = 0.13f) else TacticalSurfaceHigh, shape)
+                .border(1.dp, if (outgoing) TacticalGreen.copy(alpha = 0.45f) else TacticalLine, shape).padding(6.dp)
+        ) {
+            val img = image
+            if (img != null) androidx.compose.foundation.Image(img, "Photo", Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { full = true }, contentScale = androidx.compose.ui.layout.ContentScale.FillWidth)
+            else Box(Modifier.fillMaxWidth().height(120.dp).background(TacticalLine, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                Text(if (progress != null) "${(progress * 100).toInt()}%" else "…", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
+            }
+            if (progress != null) Box(Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp).background(TacticalLine, RoundedCornerShape(2.dp))) {
+                Box(Modifier.fillMaxWidth(progress.coerceIn(0.02f, 1f)).height(4.dp).background(TacticalAmber, RoundedCornerShape(2.dp)))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                val label = listOfNotNull(statusText?.takeIf { it.isNotEmpty() }, progress?.let { "${(it * 100).toInt()}%" }, m.note).joinToString(" · ")
+                if (label.isNotEmpty()) Text(label, color = statusColor, fontFamily = Mono, fontSize = 9.sp)
+                Text(clock(m.time), color = TacticalDim, fontFamily = Mono, fontSize = 9.sp)
+            }
+        }
+    }
+    if (full) androidx.compose.ui.window.Dialog(onDismissRequest = { full = false }) {
+        val big by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, m.blobId) {
+            value = m.blobId?.let { vm.loadImage(it, 2048) }?.asImageBitmap()
+        }
+        Box(Modifier.clickable { full = false }) { big?.let { androidx.compose.foundation.Image(it, "Photo", Modifier.fillMaxWidth(), contentScale = androidx.compose.ui.layout.ContentScale.Fit) } }
     }
 }

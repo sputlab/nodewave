@@ -42,7 +42,8 @@ class MeshEngine(app: Application) {
     val localNodeName: String get() = settings.settings.value.nodeName.ifBlank { Build.MODEL }
 
     private val ble = BleTransport(app, identity.nodeId)
-    val transport: MeshTransport = ble
+    private val wifiLink = com.nodewave.mesh.transport.WifiDirectLink(app, identity.nodeId, scope)
+    val transport: MeshTransport = com.nodewave.mesh.transport.CompositeTransport(ble, wifiLink)
     val benchmark: LinkBenchmark = ble
     val radio: RadioControl = ble
     val settings = SettingsStore(app)

@@ -59,10 +59,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val stats: StateFlow<MeshStats> = messenger.stats
     val settings: StateFlow<AppSettings> = engine.settings.settings
 
+    /** Opens a Wi-Fi Direct link to a neighbour and says how it went (a diagnostic; transfers do this by themselves). */
+    suspend fun fastLinkTest(peerId: String): String {
+        val started = System.currentTimeMillis()
+        val ok = messenger.upgradeLink(peerId)
+        val ms = System.currentTimeMillis() - started
+        val cls = messenger.pathClass(peerId)
+        return (if (ok) "Wi-Fi Direct link up in ${ms / 1000.0} s, class ${cls.name}" else "No Wi-Fi Direct link (${ms / 1000.0} s)").also { MeshLog.d("FAST LINK TEST: $it") }
+    }
+
     val voice = VoiceController(viewModelScope, messenger, engine.blobStore)
     val transfers: StateFlow<Map<String, Float>> = messenger.transfers
+    val photos = PhotoController(viewModelScope, messenger, application) { voice.postNotice(it) }
+    fun sendTestPhoto(peerId: String) = photos.sendTest(peerId)
+    suspend fun loadImage(blobId: String, maxPx: Int) = photos.load(engine.blobStore, blobId, maxPx)
     init {
-        viewModelScope.launch { engine.settings.settings.collect { messenger.voiceLowBandwidth = it.voiceLowBandwidth } }
+        viewModelScope.launch { engine.settings.settings.collect { messenger.voiceLowBandwidth = it.voiceLowBandwidth; messenger.fastLinkMode = it.fastLinkMode } }
     }
     /** A station set to a fixed position shows (and sends) that position; otherwise the latest GPS fix. */
     val ownPosition: StateFlow<GeoPosition?> = combine(engine.positionTracker.latest, engine.settings.settings) { gps, s ->

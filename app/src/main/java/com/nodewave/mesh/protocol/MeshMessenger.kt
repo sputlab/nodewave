@@ -113,6 +113,8 @@ class MeshMessenger(
         /** A neighbour-set change is announced after a random 0-4 s, so phones started together do not all connect at once. */
         private const val HELLO_CHANGE_DELAY_MS = 4_000L
         private const val ROUTE_TTL_MS = 150_000L
+        /** Creating a Wi-Fi Direct group and having the neighbour join it takes several seconds. */
+        private const val LINK_TIMEOUT_MS = 30_000L
         /** After sending the chunks still missing, wait this long for the receiver's bitmap before sending again. */
         private const val ACK_WAIT_MS = 8_000L
         private const val MAX_IDLE_ROUNDS = 4
@@ -523,6 +525,7 @@ class MeshMessenger(
             PacketType.DATA -> onData(packet, linkId)
             PacketType.DATA_ACK -> onDataAck(packet, linkId)
             PacketType.DATA_REFUSE -> onDataRefuse(packet)
+            PacketType.LINK -> onLink(packet, linkId)
         }
     }
 
@@ -941,6 +944,67 @@ class MeshMessenger(
 
     // ---------------------------------------------------------------- bulk transfers (voice clips)
 
+    /** Who may make this node join a fast link; set from the settings. */
+    @Volatile var fastLinkMode: FastLinkMode = FastLinkMode.VERIFIED
+
+    private val linkWaiters = HashMap<String, CompletableDeferred<Boolean>>()
+
+    /** True on a phone with a fast second radio. */
+    val fastLinkAvailable: Boolean get() = transport.fastLink != null && fastLinkMode != FastLinkMode.OFF
+
+    /**
+     * Opens a fast link (Wi-Fi Direct) to a neighbour we can see over the main radio: we create the group, the offer goes
+     * sealed over the main radio, the neighbour joins and says so. True once [MeshTransport.linkClassTo] reports it fast.
+     */
+    suspend fun upgradeLink(peerId: String): Boolean {
+        val fast = transport.fastLink ?: return false
+        if (transport.linkClassTo(peerId) == LinkClass.FAST) return true
+        if (transport.discoveredPeers.value.none { it.id == peerId }) return false
+        linkWaiters[peerId]?.let { return it.await() }
+        val waiter = CompletableDeferred<Boolean>()
+        linkWaiters[peerId] = waiter
+        var ok = false
+        try {
+            val offer = fast.host(peerId) ?: return false
+            val linkId = random.nextInt()
+            sendControl(peerId, PacketType.LINK, LinkCodec.offer(linkId, offer))
+            ok = withTimeoutOrNull(LINK_TIMEOUT_MS) { waiter.await() } == true
+            if (!ok) fast.close(peerId)
+            return ok
+        } finally {
+            waiter.complete(ok)
+            linkWaiters.remove(peerId)
+        }
+    }
+
+    private fun onLink(packet: Packet, linkId: String) {
+        val (_, plain) = open(packet) ?: return
+        val msg = LinkCodec.decode(plain) ?: return
+        noteLink(packet, linkId)
+        scope.launch { sendAck(packet) } // sent as a control packet: it is resent until this ACK arrives
+        val from = packet.senderId
+        when (msg.kind) {
+            LinkCodec.OFFER -> {
+                if (!markSeen(packet)) return
+                scope.launch { answerOffer(from, msg) }
+            }
+            LinkCodec.READY -> linkWaiters[from]?.complete(true)
+            LinkCodec.DECLINE -> linkWaiters[from]?.complete(false)
+        }
+    }
+
+    private suspend fun answerOffer(from: String, msg: LinkCodec.Decoded) {
+        val fast = transport.fastLink
+        val allowed = when (fastLinkMode) {
+            FastLinkMode.OFF -> false
+            FastLinkMode.VERIFIED -> from in _verifiedPeers.value
+            FastLinkMode.EVERYONE -> true
+        }
+        val ok = allowed && fast != null && msg.offer != null && fast.join(from, msg.offer)
+        if (!allowed) MeshLog.d("Fast link offer from ${nameOf(from)} declined (mode $fastLinkMode)")
+        sendControl(from, PacketType.LINK, LinkCodec.answer(if (ok) LinkCodec.READY else LinkCodec.DECLINE, msg.linkId))
+    }
+
     /** The user's wish to always use the thinnest codec, whatever the link. */
     @Volatile var voiceLowBandwidth: Boolean = false
 
@@ -985,17 +1049,31 @@ class MeshMessenger(
         if (durationMs > BlobPolicy.MAX_VOICE_SECONDS * 1000 + 500) return SendBlobResult.TOO_LONG
         if (codec.minClass.code > link.code) return SendBlobResult.CODEC_NEEDS_FASTER_LINK
         if (audio.size > BlobPolicy.maxBytes(BlobKind.VOICE, link)) return SendBlobResult.TOO_BIG
+        return startBlob(peerId, MessageKind.VOICE, codec.code, durationMs, audio, link)
+    }
+
+    /** Sends a JPEG. Photos never go over a slow link; over Bluetooth they must be small, over a fast link they may be bigger. */
+    fun sendImage(peerId: String, jpeg: ByteArray): SendBlobResult {
+        val link = pathClass(peerId)
+        if (jpeg.isEmpty()) return SendBlobResult.EMPTY
+        val max = BlobPolicy.maxBytes(BlobKind.IMAGE, link)
+        if (max == 0) return SendBlobResult.CODEC_NEEDS_FASTER_LINK
+        if (jpeg.size > max) return SendBlobResult.TOO_BIG
+        return startBlob(peerId, MessageKind.IMAGE, IMAGE_JPEG, 0, jpeg, link)
+    }
+
+    private fun startBlob(peerId: String, kind: MessageKind, codec: Int, durationMs: Int, bytes: ByteArray, link: LinkClass): SendBlobResult {
         val transferId = random.nextInt()
         val blobId = UUID.randomUUID().toString()
         val message = ChatMessage(
             messageId = transferId, peerId = peerId, peerName = nameOf(peerId), outgoing = true, text = "",
-            status = MessageStatus.SENDING, kind = MessageKind.VOICE, blobId = blobId, durationMs = durationMs, codec = codec.code
+            status = MessageStatus.SENDING, kind = kind, blobId = blobId, durationMs = durationMs, codec = codec
         )
         append(message)
         count { it.copy(sent = it.sent + 1) }
         scope.launch {
-            runCatching { blobStore.put(blobId, audio) }.onFailure { MeshLog.e("Could not keep the clip", it) }
-            runTransfer(message, link, audio)
+            runCatching { blobStore.put(blobId, bytes) }.onFailure { MeshLog.e("Could not keep the blob", it) }
+            runTransfer(message, link, bytes)
         }
         return SendBlobResult.STARTED
     }
@@ -1005,7 +1083,8 @@ class MeshMessenger(
         val body = DataFrame.bodyBytes(link)
         val chunks = audio.toList().chunked(body).map { it.toByteArray() }
         val total = chunks.size
-        val need = BlobPolicy.needClass(BlobKind.VOICE, message.codec)
+        val blobKind = if (message.kind == MessageKind.IMAGE) BlobKind.IMAGE else BlobKind.VOICE
+        val need = BlobPolicy.needClass(blobKind, message.codec)
         val out = Outgoing(dest, message.messageId, total, IntArray(total) { random.nextInt() })
         outgoing[out.transferId] = out
         out.chunkIds.forEach { outgoingByChunk[it] = out }
@@ -1021,7 +1100,7 @@ class MeshMessenger(
                 for (i in 0 until total) {
                     if (out.acked[i]) continue
                     if (out.done.isCompleted) break
-                    val plain = DataFrame.encode(DataFrame.Chunk(BlobKind.VOICE, message.codec, message.durationMs, out.transferId, i, total, chunks[i]))
+                    val plain = DataFrame.encode(DataFrame.Chunk(blobKind, message.codec, message.durationMs, out.transferId, i, total, chunks[i]))
                     val r = sealAndDispatchData(dest, plain, out.chunkIds[i], need) ?: return fail("No secure session")
                     if (r.exceptionOrNull() is LinkTooSlowException) out.done.complete(Outcome.Refused(need))
                 }
@@ -1104,16 +1183,17 @@ class MeshMessenger(
                 val tkey = "in:$sender:${inc.transferId}"
                 ackTimers.remove(tkey)?.cancel()
                 _transfers.update { it - tkey }
-                if (inc.kind == BlobKind.VOICE) {
+                run {
+                    val kind = if (inc.kind == BlobKind.IMAGE) MessageKind.IMAGE else MessageKind.VOICE
                     val blobId = UUID.randomUUID().toString()
                     count { it.copy(received = it.received + 1) }
-                    note(ActivityEvent.Kind.MESSAGE, "Voice message from ${nameOf(sender)}" + (if (packet.hops > 0) " via ${packet.hops} relay(s)" else ""), sender)
+                    note(ActivityEvent.Kind.MESSAGE, (if (kind == MessageKind.IMAGE) "Photo" else "Voice message") + " from ${nameOf(sender)}" + (if (packet.hops > 0) " via ${packet.hops} relay(s)" else ""), sender)
                     scope.launch {
-                        runCatching { blobStore.put(blobId, r.bytes) }.onFailure { MeshLog.e("Could not keep the clip", it) }
+                        runCatching { blobStore.put(blobId, r.bytes) }.onFailure { MeshLog.e("Could not keep the blob", it) }
                         append(
                             ChatMessage(
                                 messageId = inc.transferId, peerId = sender, peerName = nameOf(sender), outgoing = false, text = "",
-                                hops = packet.hops, status = MessageStatus.RECEIVED, kind = MessageKind.VOICE,
+                                hops = packet.hops, status = MessageStatus.RECEIVED, kind = kind,
                                 blobId = blobId, durationMs = inc.durationMs, codec = inc.codec
                             )
                         )

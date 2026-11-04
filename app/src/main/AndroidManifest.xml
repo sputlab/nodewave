@@ -31,6 +31,12 @@
 
     <!-- LoRa boards (E22-900T22U, ESP32 boards) will connect through a USB OTG cable. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi.direct" android:required="false" />
+
+    <!-- Fast link (Wi-Fi Direct) between two phones that agreed to it over Bluetooth; never used to find people. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
 
     <!-- API 31+: granular Bluetooth permissions -->
     <uses-permission

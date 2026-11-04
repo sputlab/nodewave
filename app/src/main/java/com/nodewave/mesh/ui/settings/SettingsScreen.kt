@@ -142,6 +142,7 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
                 codecReport?.let { Text(it, color = TacticalDim, fontFamily = Mono, fontSize = 10.sp) }
             }
         }
+        item { FastLinkPanel(vm, s.fastLinkMode) }
         item {
             TacPanel(title = "Position") {
                 Text("Who can see where you are", color = TacticalText, fontFamily = Sans, fontSize = 14.sp)
@@ -292,5 +293,26 @@ private fun LoraPanel(vm: MainViewModel, lora: LoraSettings, usb: List<Triple<St
         Segmented(listOf(LoraMode.TRANSPARENT to "Transparent", LoraMode.FIXED to "Fixed", LoraMode.WOR to "WOR"), lora.mode, { v -> vm.updateSettings { it.copy(lora = it.lora.copy(mode = v)) } })
         SectionLabel("Packet size (bytes)")
         Segmented(LoraSettings.PACKET_SIZES.map { it to "$it" }, lora.packetBytes, { v -> vm.updateSettings { it.copy(lora = it.lora.copy(packetBytes = v)) } })
+    }
+}
+
+@Composable
+private fun FastLinkPanel(vm: MainViewModel, mode: com.nodewave.mesh.protocol.FastLinkMode) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val permission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }
+    val needed = if (android.os.Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
+    val granted = androidx.core.content.ContextCompat.checkSelfPermission(context, needed) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    TacPanel(title = "Wi-Fi Direct") {
+        Text("Big transfers (photos) can move to a direct Wi-Fi link between two phones, much faster than Bluetooth. Bluetooth still finds people and sets it up; no one has to tap anything.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+        Text("Who may start one with you", color = TacticalText, fontFamily = Sans, fontSize = 14.sp)
+        Segmented(
+            listOf(com.nodewave.mesh.protocol.FastLinkMode.OFF to "Nobody", com.nodewave.mesh.protocol.FastLinkMode.VERIFIED to "Verified", com.nodewave.mesh.protocol.FastLinkMode.EVERYONE to "Everyone"), mode,
+            { v ->
+                vm.updateSettings { it.copy(fastLinkMode = v) }
+                if (v != com.nodewave.mesh.protocol.FastLinkMode.OFF && !granted) permission.launch(needed)
+            }
+        )
+        if (mode != com.nodewave.mesh.protocol.FastLinkMode.OFF && !granted) TacButton("Allow nearby Wi-Fi", { permission.launch(needed) }, kind = TacKind.AMBER, small = true)
+        Text("While a link is up this phone is not connected to your normal Wi-Fi network. It closes by itself after 40 seconds without traffic.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
     }
 }

@@ -1,5 +1,8 @@
 package com.nodewave.mesh.protocol
 
+/** Image formats in a photo's codec byte. */
+const val IMAGE_JPEG = 1
+
 enum class BlobKind(val code: Int) {
     VOICE(1),
     IMAGE(2);
@@ -30,7 +33,7 @@ object BlobPolicy {
     const val MAX_VOICE_SECONDS = 15
 
     /** Most chunks one transfer may have (a sanity bound: the acknowledgement bitmap is `total / 8` bytes). */
-    const val MAX_CHUNKS = 640
+    const val MAX_CHUNKS = 1024
 
     /** Largest blob of [kind] allowed over a path whose slowest link is [link]; 0 means not at all. */
     fun maxBytes(kind: BlobKind, link: LinkClass): Int = when (kind) {
@@ -42,8 +45,15 @@ object BlobPolicy {
         BlobKind.IMAGE -> when (link) {
             LinkClass.SLOW -> 0
             LinkClass.MEDIUM -> 65_536
-            LinkClass.FAST -> 1_000_000
+            LinkClass.FAST -> 700_000
         }
+    }
+
+    /** About how many bytes to compress a photo to for a path whose slowest link is [link] (0: photos do not go). */
+    fun imageTargetBytes(link: LinkClass): Int = when (link) {
+        LinkClass.SLOW -> 0
+        LinkClass.MEDIUM -> 56_000
+        LinkClass.FAST -> 600_000
     }
 
     /** What a receiver is willing to assemble whatever the path was. */

@@ -222,6 +222,7 @@ private fun ConversationView(vm: MainViewModel, key: String, summary: Conversati
                 recording = if (recording !is com.nodewave.mesh.Recording.Idle) ({ mod -> RecordingBar(vm, voiceSettings.voiceHoldToRecord, mod) }) else null,
                 enabled = state == TransportState.ACTIVE, placeholder = "Message $title",
                 mic = if (isGroup) null else ({ MicButton(vm, id, state == TransportState.ACTIVE) }),
+                photo = if (isGroup) null else ({ PhotoButton(vm, id, state == TransportState.ACTIVE) }),
                 maxBytes = if (isGroup) GroupCodec.MAX_TEXT_BYTES else MeshMessenger.MAX_TEXT_BYTES,
                 onPing = if (isGroup) null else ({ vm.pingPeer(id) }),
                 onSend = { text -> if (isGroup) vm.sendGroupText(id, text) else vm.sendToPeer(id, text) }
@@ -245,6 +246,13 @@ private fun placeholderNode(id: String, name: String) = KnownNode(id, name, name
 
 @Composable
 private fun PersonalLine(vm: MainViewModel, m: ChatMessage) {
+    if (m.kind == com.nodewave.mesh.protocol.MessageKind.IMAGE) {
+        ImageBubble(
+            vm, m, statusText = if (m.outgoing) statusLabel(m.status) + if (m.hops > 0) " · ${m.hops} relay" else "" else if (m.hops > 0) "${m.hops} relay" else null,
+            statusColor = when (m.status) { MessageStatus.DELIVERED -> TacticalGreen; MessageStatus.FAILED -> TacticalRed; MessageStatus.RECEIVED -> TacticalDim; else -> TacticalAmber }
+        )
+        return
+    }
     if (m.kind == com.nodewave.mesh.protocol.MessageKind.VOICE) {
         VoiceBubble(
             vm, m, statusText = if (m.outgoing) statusLabel(m.status) + if (m.hops > 0) " · ${m.hops} relay" else "" else if (m.hops > 0) "${m.hops} relay" else null,
@@ -292,7 +300,7 @@ private fun Bubble(outgoing: Boolean, sender: String?, senderId: String, text: S
 }
 
 @Composable
-private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPing: (() -> Unit)?, onSend: (String) -> Boolean, mic: (@Composable () -> Unit)? = null, recording: (@Composable (Modifier) -> Unit)? = null) {
+private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPing: (() -> Unit)?, onSend: (String) -> Boolean, mic: (@Composable () -> Unit)? = null, recording: (@Composable (Modifier) -> Unit)? = null, photo: (@Composable () -> Unit)? = null) {
     var text by remember { mutableStateOf("") }
     fun send() { if (text.isNotBlank() && onSend(text)) text = "" }
     Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -303,6 +311,7 @@ private fun Composer(enabled: Boolean, placeholder: String, maxBytes: Int, onPin
             imeAction = androidx.compose.ui.text.input.ImeAction.Send, onImeAction = { if (enabled) send() }
         )
         if (recording == null && onPing != null) TacButton("Ping", onPing, enabled = enabled, kind = TacKind.AMBER, small = true)
+        if (photo != null && recording == null && text.isBlank()) photo()
         if (mic != null && (text.isBlank() || recording != null)) mic()
         if (recording == null) TacButton("Send", ::send, enabled = enabled && text.isNotBlank(), kind = TacKind.PRIMARY, small = true)
     }

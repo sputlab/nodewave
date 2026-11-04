@@ -1,6 +1,6 @@
 # NodeWave security notes
 
-Status: **v0.11.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
+Status: **v0.12.0, not independently audited.** The design uses only standard, well-reviewed primitives from the
 Java/Android platform (no custom cryptography, no third-party crypto libraries), but nobody outside this project
 has reviewed it. Do not rely on it where lives or liberty depend on it.
 
@@ -93,6 +93,15 @@ A clip travels as `DATA` packets, one sealed chunk each (same pairwise session a
 - **`DATA_REFUSE` is not authenticated**: a relay has no session with the author. Anyone in the mesh can forge one and make a transfer stop, which is no worse than jamming.
 - A sender could put a lower class byte on a transfer to get it past slow relays; the receiver drops chunks whose byte does not match their content, and receivers cap the number, size and age of transfers they assemble.
 - Clips are stored on the phone encrypted with the Keystore key, like message text; they are not forward secret on the device.
+
+## Wi-Fi Direct fast link and photos
+
+The offer to join a Wi-Fi Direct group (name, passphrase, port) is sealed with the pairwise session and travels over Bluetooth; the group uses a random passphrase of its own, and the TCP stream carries the same sealed packets as any radio, so the Wi-Fi encryption is an extra layer, not the only one. Limits:
+
+- **The group's name (`DIRECT-NW-xxxx`) is visible to anyone nearby** while it exists: it shows that NodeWave is in use, nothing more.
+- **Joining changes the phone's Wi-Fi state** (it leaves its normal network while the link is up). Who may ask is a setting: nobody, verified contacts (default), or everyone; a peer you allowed can make your phone join and leave Wi-Fi networks, and an unverified one cannot unless you chose *everyone*.
+- A node that joins is checked against the one that was offered the group; anyone else who connects to the TCP port is dropped.
+- Photos are recompressed into a new JPEG, so EXIF (location, camera, time) never leaves the phone; their pixels do. They are stored on the phone encrypted with the Keystore key, like text and voice clips.
 
 ## Known limitations
 

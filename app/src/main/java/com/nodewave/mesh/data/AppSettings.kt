@@ -47,7 +47,9 @@ data class AppSettings(
     /** Voice messages: true = hold the button to record, false = tap to start, tap to stop, then send. */
     val voiceHoldToRecord: Boolean = true,
     /** Always use the thinnest speech codec, whatever the link. */
-    val voiceLowBandwidth: Boolean = false
+    val voiceLowBandwidth: Boolean = false,
+    /** Who may make this phone join a Wi-Fi Direct group for a big transfer. */
+    val fastLinkMode: com.nodewave.mesh.protocol.FastLinkMode = com.nodewave.mesh.protocol.FastLinkMode.VERIFIED
 )
 
 /** SharedPreferences-backed settings plus the "last opened" time of each conversation. */
@@ -91,6 +93,7 @@ class SettingsStore(context: Context) {
             mapArchive = prefs.getString("map_archive", null),
             voiceHoldToRecord = prefs.getBoolean("voice_hold", true),
             voiceLowBandwidth = prefs.getBoolean("voice_low", false),
+            fastLinkMode = enumOf("fast_link", d.fastLinkMode, com.nodewave.mesh.protocol.FastLinkMode.entries.toTypedArray()),
             lora = LoraSettings(
                 powerDbm = prefs.getInt("lora_power", d.lora.powerDbm),
                 airRateKbps = prefs.getFloat("lora_rate", d.lora.airRateKbps.toFloat()).toDouble(),
@@ -110,6 +113,7 @@ class SettingsStore(context: Context) {
             putBoolean("use_fixed", s.useFixedPosition)
             putString("tile_url", s.tileUrl); putString("map_archive", s.mapArchive)
             putBoolean("voice_hold", s.voiceHoldToRecord); putBoolean("voice_low", s.voiceLowBandwidth)
+            putString("fast_link", s.fastLinkMode.name)
             putInt("lora_power", s.lora.powerDbm); putFloat("lora_rate", s.lora.airRateKbps.toFloat()); putInt("lora_channel", s.lora.channel)
             putString("lora_mode", s.lora.mode.name); putInt("lora_packet", s.lora.packetBytes)
         }.apply()

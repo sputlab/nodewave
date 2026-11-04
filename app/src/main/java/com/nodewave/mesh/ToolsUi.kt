@@ -239,10 +239,13 @@ internal fun BenchTab(
     enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
+    var fastReport by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val fastScope = androidx.compose.runtime.rememberCoroutineScope()
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Panel(title = "LINK BENCHMARK (24 KB per mode, direct nodes only)") {
             val direct = nodes.filter { it.isDirect }
             if (direct.isEmpty()) Text("No direct node in range.", color = TacticalDim, fontFamily = Mono, fontSize = 12.sp)
+            fastReport?.let { Text(it, color = TacticalAmber, fontFamily = Mono, fontSize = 11.sp) }
             direct.forEach { n ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Column(Modifier.weight(1f)) {
@@ -251,6 +254,12 @@ internal fun BenchTab(
                     }
                     Text("repeat", color = TacticalDim, fontFamily = Mono, fontSize = 10.sp)
                     Switch(checked = repeatPeer == n.id, onCheckedChange = { on -> vm.setBenchRepeat(if (on) n.id else null) }, enabled = enabled)
+                    OutlinedButton(onClick = { vm.sendTestPhoto(n.id) }, enabled = enabled, border = BorderStroke(1.dp, TacticalAmber), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                        OneLine("PHOTO", TacticalAmber, 11)
+                    }
+                    OutlinedButton(onClick = { fastScope.launch { fastReport = "Opening Wi-Fi Direct…"; fastReport = vm.fastLinkTest(n.id) } }, enabled = enabled, border = BorderStroke(1.dp, TacticalAmber), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                        OneLine("WIFI", TacticalAmber, 11)
+                    }
                     OutlinedButton(onClick = { vm.runBench(n.id) }, enabled = enabled && !busy, border = BorderStroke(1.dp, TacticalGreen)) {
                         OneLine(if (busy) "…" else "RUN", TacticalGreen, 11)
                     }

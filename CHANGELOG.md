@@ -5,6 +5,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-04
+
+A fast Wi-Fi Direct link for big transfers, and photos.
+
+### Added
+- **Wi-Fi Direct fast link.** Bluetooth still finds people and sets everything up; when a big transfer needs it, one phone creates a Wi-Fi Direct group with a random name and passphrase, sends the offer **sealed over Bluetooth**, the other joins (Android 10 and later need no confirmation tap) and the two connect over TCP. Packets keep their end-to-end sealing; the link class becomes *fast* (1400-byte packets, bigger limits) and every send to that peer uses it. It closes by itself after 40 seconds without traffic. Settings → Wi-Fi Direct chooses who may start one with you (nobody / verified contacts / everyone; verified by default) and asks for the nearby-Wi-Fi permission (Android 13+) or location (Android 10-12). Diagnostics → Bench has a *WIFI* test button per node.
+- **Photos** in one-to-one chats (photo button next to the microphone): shrunk and recompressed to a JPEG **without any EXIF** (no location, no camera data), about 35-55 KB over Bluetooth, about 120-600 KB and up to 1600 px over a fast link (the app tries to open one first), refused on slow links and by relays whose next link is slow. Shown in the chat, tap to enlarge; stored encrypted at rest and deleted with the history. A *PHOTO* test button in Diagnostics → Bench sends a synthetic picture.
+- Tests: the fast link negotiation (offer sealed, declined unless the sender is allowed, failed joins leave the link medium), photo limits per link class, photos over fast links and refused by slow relays.
+
+### Measured (Mi Note 10 and Samsung A52)
+- Opening the link took 6.5 to 7 seconds; a 122 KB photo then crossed in 0.3 s. Over Bluetooth alone a 35 KB photo took 8.6 s (about 4 KB/s).
+
+### Changed
+- More than one radio can sit behind the transport (`CompositeTransport`): the main radio finds peers, the fast link carries bytes. `MeshTransport.fastLink` and `FastLinkTransport` are the interface for it.
+- A transfer may have up to 1024 chunks (was 640).
+
 ## [0.11.0] - 2026-11-04
 
 Codec2 for slow links.
