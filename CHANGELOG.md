@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+### Website
+- New design for nodewave.org: a screenshot carousel with slowly moving arrows, dots, drag, a centre-emphasis effect and a lightbox; a **timeline** from the first ping to today with the planned future (next, soon, later, exploring); a **Support** button and `donate.html` (PayPal, adapted from sputlab.com/donate); and `test-report.html`, a form with 51 tests across 10 groups, device details detected from the browser (model, Android version, screen), app version, setup, measurements and notes, sent by email to testreport@nodewave.org (composed in the browser; copy and download as fallbacks).
+
 ## [0.12.2] - 2026-11-05
 
 Transfers that survive a weak radio.
