@@ -144,3 +144,14 @@
     });
   }).catch(function () {});
 })();
+
+// ---------- burger menu (phones) ----------
+(function () {
+  var top = document.querySelector('.top'), b = top && top.querySelector('.burger');
+  if (!b) return;
+  var set = function (open) { top.classList.toggle('open', open); b.setAttribute('aria-expanded', open ? 'true' : 'false'); };
+  b.addEventListener('click', function () { set(!top.classList.contains('open')); });
+  top.querySelectorAll('.nav a').forEach(function (a) { a.addEventListener('click', function () { set(false); }); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') set(false); });
+  window.addEventListener('resize', function () { if (window.innerWidth > 760) set(false); });
+})();

@@ -5,6 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+### Changed
+- The app describes itself as an "Off-Grid Mesh Communication System" (top bar subtitle and Settings → About) instead of a walkie-talkie.
+
+### Website
+- A burger menu appears in every page header on phones (the links were simply hidden before).
+
 ## [0.12.3] - 2026-11-05
 
 ### Changed

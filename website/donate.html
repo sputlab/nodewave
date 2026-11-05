@@ -13,10 +13,11 @@
 <body>
 <header class="top"><div class="wrap">
   <a class="brand" href="./"><img src="images/icon.png" alt="">NODEWAVE</a>
-  <nav class="nav">
+  <nav class="nav" id="mainnav">
     <a href="./#screens">Screens</a><a href="./#features">Features</a><a href="./#timeline">Timeline</a><a href="./#get">Get it</a><a href="devices.html">Devices</a><a href="test-report.html">Test report</a>
     <a class="btn amber small" href="donate.html" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></svg>Support</a>
   </nav>
+  <button class="burger" type="button" aria-label="Menu" aria-expanded="false" aria-controls="mainnav"><span></span><span></span><span></span></button>
 </div></header>
 
 <main class="wrap">
@@ -114,5 +115,6 @@
   if (/[?&]thanks=1/.test(location.search)) document.getElementById('thanksBanner').hidden = false;
 })();
 </script>
+<script src="site.js"></script>
 </body>
 </html>

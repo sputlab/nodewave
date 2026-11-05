@@ -254,7 +254,7 @@ private fun Splash(onSkip: () -> Unit) {
         Spacer(Modifier.height(28.dp))
         Text("NODEWAVE", color = TacticalGreen, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 28.sp, letterSpacing = 6.sp)
         Spacer(Modifier.height(6.dp))
-        Text("OFF-GRID MESH WALKIE-TALKIE", color = TacticalDim, fontFamily = Mono, fontSize = 11.sp, letterSpacing = 2.sp)
+        Text("OFF-GRID MESH COMMUNICATION SYSTEM", color = TacticalDim, fontFamily = Mono, fontSize = 11.sp, letterSpacing = 2.sp)
         Spacer(Modifier.height(22.dp))
         Text("v$version", color = TacticalAmber, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         Spacer(Modifier.height(6.dp))
