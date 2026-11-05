@@ -129,3 +129,18 @@
     }
   }
 })();
+
+// ---------- numbers bar ----------
+// stats.json is rebuilt by the Website workflow on every deploy (and daily); the figures in the HTML are the fallback
+(function () {
+  var cells = document.querySelectorAll('[data-stat]');
+  if (!cells.length) return;
+  var show = function (el, n) { el.textContent = String(n); };
+  fetch('stats.json', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : Promise.reject(); }).then(function (s) {
+    var days = Math.max(1, Math.floor((Date.now() - Date.parse(s.since)) / 86400000) + 1);
+    cells.forEach(function (el) {
+      var v = el.dataset.stat === 'days' ? days : s[el.dataset.stat];
+      if (typeof v === 'number') show(el, v);
+    });
+  }).catch(function () {});
+})();

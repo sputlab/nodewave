@@ -4,7 +4,9 @@ name: Website
 on:
   push:
     branches: [main]
-    paths: ["website/**", ".github/workflows/pages.yml"]
+    paths: ["website/**", "app/src/test/**", ".github/workflows/pages.yml"]
+  schedule:
+    - cron: "17 4 * * *"
   workflow_dispatch:
 
 permissions:
@@ -24,6 +26,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Numbers for the home page
+        run: |
+          printf '{"since":"%s","releases":%s,"tests":%s}\n' \
+            "$(git log --reverse --format=%cs | head -1)" \
+            "$(git tag --list 'v*' | wc -l | tr -d ' ')" \
+            "$(grep -rh '@Test' app/src/test | wc -l | tr -d ' ')" > website/stats.json
+          cat website/stats.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

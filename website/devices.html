@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tested devices - NodeWave</title>
+<meta name="description" content="The phones NodeWave has been developed and verified on: Honor View 10, Xiaomi Mi Note 10, Sony Xperia and Samsung Galaxy A52, from Android 10 to Android 14.">
+<meta name="theme-color" content="#04080a">
+<link rel="canonical" href="https://nodewave.org/devices.html">
+<link rel="icon" href="images/icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="./"><img src="images/icon.png" alt="">NODEWAVE</a>
+  <nav class="nav"><a href="./#screens">Screens</a><a href="./#timeline">Timeline</a><a href="devices.html" aria-current="page" style="color:var(--text)">Devices</a><a href="test-report.html">Test report</a><a class="btn amber small" href="donate.html">Support</a></nav>
+</div></header>
+
+<main class="wrap">
+  <div class="pagehead">
+    <p class="eyebrow">Compatibility</p>
+    <h1>Tested devices</h1>
+    <p class="lead">NodeWave is developed and checked on these four phones, which cover Android 10 to 14 and four different manufacturer skins. Every release is installed on them and the radio, the encryption, relaying, voice and photos are exercised on real hardware before it is published.</p>
+  </div>
+
+  <div class="grid devices">
+    <div class="card"><h3>Honor View 10</h3><p class="meta">BKL-L09 · Android 10 · EMUI 10</p><p>Bluetooth 5.0. The strictest of the four: EMUI freezes background apps when the screen is off, so set the battery option <em>App launch → Manage manually</em> for NodeWave.</p></div>
+    <div class="card"><h3>Xiaomi Mi Note 10</h3><p class="meta">Android 11 · MIUI</p><p>Reliable with the screen off. Needs location on for scanning (Android 11) and "Install via USB" allowed to sideload from a computer.</p></div>
+    <div class="card"><h3>Sony Xperia</h3><p class="meta">XQ-AS52 · Android 12 · near-stock</p><p>The first phone with the new Bluetooth permissions (scan, advertise, connect) and no location requirement.</p></div>
+    <div class="card"><h3>Samsung Galaxy A52</h3><p class="meta">SM-A525F · Android 14 · One UI</p><p>Reference for current Android: nearby-devices permission for Wi-Fi Direct, photo picker and camera.</p></div>
+  </div>
+
+  <div class="panel" style="margin-top:28px">
+    <h3>What has been verified</h3>
+    <ul class="ticks">
+      <li>Pairing-free discovery and chat over Bluetooth Low Energy, with the screen on and off</li>
+      <li>End-to-end encrypted sessions, key rotation and delivery receipts</li>
+      <li>Multi-hop relaying between phones that cannot hear each other</li>
+      <li>Voice clips (Opus and Codec2) and photos, over Bluetooth and over Wi-Fi Direct</li>
+      <li>Offline maps and shared positions</li>
+    </ul>
+    <p class="fine">Not yet tested on hardware: LoRa links, long relay chains of real phones, and other manufacturers (Pixel, OnePlus, Motorola, Oppo, Vivo and others).</p>
+  </div>
+
+  <div class="panel">
+    <h3>Is your phone not on the list?</h3>
+    <p class="hint2">Behaviour of the Bluetooth stack differs a lot between models. A short test with two phones tells us (and the next person) whether yours works.</p>
+    <a class="btn primary" href="test-report.html">Fill in a test report</a>
+  </div>
+</main>
+
+<footer><div class="wrap">
+  <div>NodeWave is free software under the <a href="https://github.com/sputlab/nodewave/blob/main/LICENSE">GPL-3.0</a> licence.</div>
+  <div class="links"><a href="./">Home</a><a href="https://github.com/sputlab/nodewave">GitHub</a><a href="test-report.html">Test report</a><a href="donate.html">Support</a><a href="https://sputlab.com">Sputlab</a></div>
+</div></footer>
+</body>
+</html>

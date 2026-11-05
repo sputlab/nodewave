@@ -250,3 +250,9 @@ details.group .body{padding:4px 20px 18px}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}.tl{opacity:1;transform:none}}
 
 .still *{transition:none!important;animation:none!important}
+
+/* devices page */
+.devices .meta{color:var(--green);font:12px var(--mono);letter-spacing:.04em;margin:0 0 10px}
+.ticks{margin:0 0 14px;padding:0;list-style:none}
+.ticks li{position:relative;padding:6px 0 6px 26px;color:var(--dim);font-size:15px}
+.ticks li::before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:700}
