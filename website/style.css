@@ -256,3 +256,4 @@ details.group .body{padding:4px 20px 18px}
 .ticks{margin:0 0 14px;padding:0;list-style:none}
 .ticks li{position:relative;padding:6px 0 6px 26px;color:var(--dim);font-size:15px}
 .ticks li::before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:700}
+.nav a[aria-current="page"]:not(.btn){color:var(--text)}
