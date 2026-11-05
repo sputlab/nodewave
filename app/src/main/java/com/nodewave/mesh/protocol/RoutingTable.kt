@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.protocol
 
 /** Nodes learned from neighbours' HELLO packets: `nodeId` is reachable via the direct neighbour `viaId`. */

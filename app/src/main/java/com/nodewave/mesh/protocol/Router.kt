@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.protocol
 
 /** Pure next-hop selection: no I/O, so relay behaviour can be unit-tested on the JVM. */

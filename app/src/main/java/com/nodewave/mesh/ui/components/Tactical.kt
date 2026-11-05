@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.ui.components
 
 import androidx.compose.animation.core.LinearEasing

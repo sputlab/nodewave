@@ -4,7 +4,7 @@
 
 Off-Grid Mesh Communication System for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.12.2** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
+**Status: v0.12.3** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
 
 ## Screenshots
 
@@ -23,7 +23,7 @@ Off-Grid Mesh Communication System for Android. Phones talk to each other direct
 
 Taken on real phones talking over Bluetooth (the two nodes on the map are given a fixed position on a hiking trail for the picture). Website: [nodewave.org](https://nodewave.org) (source in [`website/`](website/README.md)).
 
-## Features (v0.12.2)
+## Features (v0.12.3)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Identity key pair per install; the node ID is derived from the public key, so peers are recognised even when BLE addresses rotate and an ID cannot be claimed by someone without the key.
@@ -138,4 +138,10 @@ The UI never touches radio APIs; everything goes through `MeshTransport`, and `M
 
 ## License
 
-NodeWave is free software under the [GNU General Public License v3.0](LICENSE).
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+
+The source code of NodeWave is released under the **GNU Affero General Public License, version 3 or (at your option) any later version**: SPDX identifier `AGPL-3.0-or-later`. The full text is in [LICENSE](LICENSE), and every source file carries the identifier in its header. The vendored Codec2 sources keep their own licence (LGPL-2.1, see `app/src/main/cpp/codec2/COPYING`).
+
+### Name and logo
+
+The licence covers the code, not the brand. **The name "NodeWave" and the "NW" logo (the app icon) are trademarks reserved by the author.** Nothing in the AGPL grants a right to use them. You are free to fork, modify, distribute and even sell the software under the terms of the AGPL, but a fork that is distributed under its own responsibility, commercially or not, must **change the name and replace the icon and logo with its own from scratch**, so that nobody mistakes it for the official NodeWave app.

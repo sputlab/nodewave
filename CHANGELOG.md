@@ -5,6 +5,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-11-05
+
+### Changed
+- **Licence: GPL-3.0 becomes AGPL-3.0-or-later.** `LICENSE` is the official GNU Affero General Public License v3 text, every Kotlin source, our C file and the Gradle scripts start with `// SPDX-License-Identifier: AGPL-3.0-or-later`, and the app (Settings → About), the website, `CLAUDE.md` and the README say so. The README now states that the name NodeWave and the NW logo are trademarks reserved by the author and that a fork has to change name and icon. Earlier releases stay under the licence they were published with (GPL-3.0); the licence of the code from this version on is the AGPL.
+
 ### Repository
 - The website moved from `docs/` to `website/` and is published by a GitHub Actions workflow (`.github/workflows/pages.yml`), the only way Pages can serve a folder other than `/docs`. `docs/` now holds documents (`SECURITY.md`); `README.md`, `CHANGELOG.md`, `LICENSE` and `CLAUDE.md` stay in the root.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.protocol
 
 /** Everything the app knows about a node, whether it is in range now or not. */

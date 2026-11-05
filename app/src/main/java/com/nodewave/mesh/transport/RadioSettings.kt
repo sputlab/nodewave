@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.transport
 
 /** How hard the BLE scanner works: more duty cycle finds nodes sooner and costs battery. */

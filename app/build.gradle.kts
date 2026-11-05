@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -12,8 +13,8 @@ android {
         applicationId = "com.nodewave.mesh"
         minSdk = 29
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.12.2"
+        versionCode = 20
+        versionName = "0.12.3"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
     }
@@ -57,7 +58,7 @@ dependencies {
     implementation(libs.zxing.core)
     // Offline-capable map view (Apache-2.0, no Google services); tiles come from files or from a server the user chooses
     implementation(libs.osmdroid)
-    // Offline vector maps (Mapsforge .map files, LGPL-3.0, GPL-3.0 compatible)
+    // Offline vector maps (Mapsforge .map files, LGPL-3.0, AGPL-3.0 compatible)
     implementation(libs.osmdroid.mapsforge)
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.ui.settings
 
 import android.Manifest
@@ -223,7 +224,7 @@ fun SettingsScreen(vm: MainViewModel, onDiagnostics: () -> Unit) {
         item {
             TacPanel(title = "About") {
                 Text("NodeWave ${vm.appVersion()}", color = TacticalText, fontFamily = Mono, fontSize = 14.sp)
-                Text("Off-grid mesh walkie-talkie over Bluetooth LE. Open source, GPL-3.0. No accounts, no servers, no tracking.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
+                Text("Off-grid mesh walkie-talkie over Bluetooth LE. Open source, AGPL-3.0-or-later. No accounts, no servers, no tracking.", color = TacticalDim, fontFamily = Sans, fontSize = 12.sp)
                 Text("github.com/sputlab/nodewave", color = TacticalGreen, fontFamily = Mono, fontSize = 11.sp)
             }
         }

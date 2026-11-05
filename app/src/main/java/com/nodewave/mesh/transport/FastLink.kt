@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.transport
 
 /** What a joining node needs to reach the group a peer has created: its network name, passphrase and the TCP port it listens on. */

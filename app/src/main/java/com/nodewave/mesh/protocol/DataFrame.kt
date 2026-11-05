@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 package com.nodewave.mesh.protocol
 
 import com.nodewave.mesh.crypto.Sealed
