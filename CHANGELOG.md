@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+### Repository
+- The website moved from `docs/` to `website/` and is published by a GitHub Actions workflow (`.github/workflows/pages.yml`), the only way Pages can serve a folder other than `/docs`. `docs/` now holds documents (`SECURITY.md`); `README.md`, `CHANGELOG.md`, `LICENSE` and `CLAUDE.md` stay in the root.
+
 ### Website
 - New design for nodewave.org: a screenshot carousel with slowly moving arrows, dots, drag, a centre-emphasis effect and a lightbox; a **timeline** from the first ping to today with the planned future (next, soon, later, exploring); a **Support** button and `donate.html` (PayPal, adapted from sputlab.com/donate); and `test-report.html`, a form with 51 tests across 10 groups, device details detected from the browser (model, Android version, screen), app version, setup, measurements and notes, sent by email to testreport@nodewave.org (composed in the browser; copy and download as fallbacks).
 
