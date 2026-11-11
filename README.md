@@ -1,4 +1,4 @@
-<p align="center"><img src="website/images/icon.png" alt="NodeWave icon" width="128"></p>
+<p align="center"><img src="docs/images/icon.png" alt="NodeWave icon" width="128"></p>
 
 # NodeWave
 
@@ -9,19 +9,19 @@ Off-Grid Mesh Communication System for Android. Phones talk to each other direct
 ## Screenshots
 
 <p align="center">
-<img src="website/assets/screens/chats.png" width="180" alt="Chats and groups">
-<img src="website/assets/screens/direct-chat.png" width="180" alt="Encrypted direct chat">
-<img src="website/assets/screens/group-chat.png" width="180" alt="Group chat">
-<img src="website/assets/screens/map.png" width="180" alt="Offline map">
+<img src="docs/images/screens/chats.png" width="180" alt="Chats and groups">
+<img src="docs/images/screens/direct-chat.png" width="180" alt="Encrypted direct chat">
+<img src="docs/images/screens/group-chat.png" width="180" alt="Group chat">
+<img src="docs/images/screens/map.png" width="180" alt="Offline map">
 </p>
 <p align="center">
-<img src="website/assets/screens/network.png" width="180" alt="Radar and nodes in range">
-<img src="website/assets/screens/nodes.png" width="180" alt="Known nodes">
-<img src="website/assets/screens/settings.png" width="180" alt="Settings">
-<img src="website/assets/screens/splash.png" width="180" alt="Splash screen">
+<img src="docs/images/screens/network.png" width="180" alt="Radar and nodes in range">
+<img src="docs/images/screens/nodes.png" width="180" alt="Known nodes">
+<img src="docs/images/screens/settings.png" width="180" alt="Settings">
+<img src="docs/images/screens/splash.png" width="180" alt="Splash screen">
 </p>
 
-Taken on real phones talking over Bluetooth (the two nodes on the map are given a fixed position on a hiking trail for the picture). Website: [nodewave.org](https://nodewave.org) (source in [`website/`](website/README.md)).
+Taken on real phones talking over Bluetooth (the two nodes on the map are given a fixed position on a hiking trail for the picture). Website: [nodewave.org](https://nodewave.org) (source in [sputlab/nodewave-website](https://github.com/sputlab/nodewave-website)).
 
 ## Features (v0.12.3)
 
