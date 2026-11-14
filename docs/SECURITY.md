@@ -86,6 +86,14 @@ receives a position can keep it and pass it on; with "everyone" any node in rang
 it; the time comes from the sender's clock and is not checked; positions are stored on the receiving phone in
 clear in the app database (not in the encrypted message table).
 
+An **SOS** is the one case where a position leaves the phone outside that setting. It is an ordinary text message
+("SOS EMERGENCY · name needs help · lat, lon ±accuracy") sent to every node in reach, one sealed copy per
+recipient, and the sender chooses on the confirmation sheet whether the coordinates are in it. Limits: with the
+coordinates left in, every reachable node gets them even when position sharing is "nobody" or "verified only",
+and they stay in the recipients' chat history; the red SOS styling on the receiving side is triggered by the
+first words of the text, so anyone can type a message that looks like one (it still arrives authenticated as
+coming from that node); an SOS reaches only the nodes in reach at that moment and is not stored and forwarded.
+
 ## Voice messages and bulk transfers
 
 A clip travels as `DATA` packets, one sealed chunk each (same pairwise session and authenticated data as chat, plus the byte that names the link class the transfer needs, so a relay cannot change it). The receiver's `DATA_ACK` is sealed too. Relays and eavesdroppers see packet sizes, timing, sender and recipient and that it is bulk data, not what it contains. Limits:

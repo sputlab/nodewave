@@ -5,8 +5,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-14
+
+New interface, SOS, and a fix for phones that could not be reached.
+
+### Added
+- **SOS.** A red SOS button is on screen in every section; the second tap sends "SOS EMERGENCY · name needs help · coordinates" to every node in reach, one sealed copy each like any other message. The sheet shows the exact text first and lets you leave the position out. Receivers show it in red in the chat list and in the conversation. It is an ordinary text message: nothing new on the wire, older versions read it as text.
+- **Ping all** and **Message to everyone** in the same bar: one tap pings every node in reach, two taps send a ready-made message ("All OK", "On my way", "Need help", "Regroup") or one you type.
+- Each node in the list has its own Ping and Chat buttons, and shows the answer to the ping on the button.
+
+### Fixed
+- **A phone could see its neighbours while they could not reach it.** A Mi Note 10 (Android 11) went silent a few seconds after the radio started: its advertisement stopped at the first inbound connection and was not resumed, so the others dropped it 15 s later and pings to it failed until the next four-minute refresh. Advertising is now renewed shortly after an inbound link closes (at most once every 8 s): the new advertisement starts before the old one stops, so there is no gap in which a neighbour dialling the phone times out; a phone that cannot run two advertisements at once (Honor View 10) keeps the old one.
+
 ### Changed
+- **New interface.** A fixed header shows the node's name and ID and the radio state with its Start/Stop switch and the medium in use; the sections are Network (nodes, radar, QR-Trust), Comms (chats and groups), Map and Diag (radio console, activity, link test); Settings open from the header. The old Network and Nodes tabs are one list, and the raw radio log left the main screens.
+- New look from the logo: true black background, the logo's blue-to-green colours each with one meaning (blue structure, cyan interaction, teal in transit, green working), red and amber only for SOS and faults. Signal bars go from blue (weak) to green (strong). Operational buttons are at least 56 dp high, the action bar 64 dp.
+- Under the hood the screens no longer know the view model: each takes an immutable state and reports actions (`ui/theme`, `ui/components`, `ui/screens`, `ui/navigation`). The first-generation test screens (contacts, groups and chat inside Diagnostics) are gone; what they tested has had a real screen for a while.
 - The app describes itself as an "Off-Grid Mesh Communication System" (top bar subtitle and Settings → About) instead of a walkie-talkie.
+
+### Documentation
+- README and F-Droid screenshots show the new interface (dummy names, map in the Dolomites); the full set is in `docs/images/promo/`.
 
 ### Website
 - A burger menu appears in every page header on phones (the links were simply hidden before).

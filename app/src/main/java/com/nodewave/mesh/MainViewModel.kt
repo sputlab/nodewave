@@ -16,7 +16,6 @@ import com.nodewave.mesh.protocol.GeoPosition
 import com.nodewave.mesh.protocol.KnownNode
 import com.nodewave.mesh.protocol.MeshStats
 import com.nodewave.mesh.protocol.NodeAdvertisement
-import com.nodewave.mesh.protocol.PacketType
 import com.nodewave.mesh.protocol.conversations
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -49,10 +48,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val transportState: StateFlow<TransportState> = engine.transport.state
     val nodes: StateFlow<List<NodeEntry>> = messenger.nodes
-    val keyedPeers: StateFlow<Set<String>> = messenger.keyedPeers
     val ignoreDirect: StateFlow<Boolean> = messenger.ignoreDirect
     val messages: StateFlow<List<ChatMessage>> = messenger.messages
-    val verifiedPeers: StateFlow<Set<String>> = messenger.verifiedPeers
     val groups: StateFlow<List<Group>> = messenger.groups
     val knownNodes: StateFlow<List<KnownNode>> = messenger.knownNodes
     val positions: StateFlow<Map<String, GeoPosition>> = messenger.positions
@@ -94,12 +91,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val logLines: StateFlow<List<String>> = MeshLog.lines
 
-    private val _selectedGroupId = MutableStateFlow<String?>(null)
-    val selectedGroupId: StateFlow<String?> = _selectedGroupId.asStateFlow()
-
-    private val _selectedPeerId = MutableStateFlow<String?>(null)
-    val selectedPeerId: StateFlow<String?> = _selectedPeerId.asStateFlow()
-
     /** Requires the Bluetooth runtime permissions to be granted already. */
     fun startRadio() {
         ContextCompat.startForegroundService(getApplication(), RadioService.startIntent(getApplication()))
@@ -111,21 +102,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setIgnoreDirect(enabled: Boolean) = messenger.setIgnoreDirect(enabled)
 
-    fun selectPeer(peerId: String) {
-        _selectedPeerId.value = if (_selectedPeerId.value == peerId) null else peerId
-    }
-
-    fun ping(peerId: String) = messenger.sendPing(peerId)
-
+    /** Pings every node in reach: the one-tap "is anyone there". */
     fun broadcastPing() = messenger.broadcastPing()
 
-    fun sendText(text: String) {
-        val trimmed = text.trim()
-        val target = _selectedPeerId.value
-        if (trimmed.isEmpty() || target == null) return
-        messenger.sendText(target, trimmed)
-    }
-
+    /** Sends [text] to every node in reach, one sealed copy each; also how an SOS goes out. */
     fun broadcastText(text: String) {
         val trimmed = text.trim()
         if (trimmed.isNotEmpty()) messenger.broadcastText(trimmed)
@@ -150,22 +130,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---- groups
 
-    fun nameOf(nodeId: String): String = nodes.value.firstOrNull { it.id == nodeId }?.name ?: nodeId.take(6)
-
-    fun selectGroup(groupId: String) {
-        _selectedGroupId.value = if (_selectedGroupId.value == groupId) null else groupId
-    }
-
-    fun createGroup(name: String, members: Set<String>): Boolean =
-        messenger.createGroup(name, members)?.also { _selectedGroupId.value = it.id } != null
-
     fun updateGroupMembers(groupId: String, members: Set<String>) = messenger.updateGroupMembers(groupId, members)
     fun acceptInvite(groupId: String) = messenger.acceptInvite(groupId)
 
-    fun leaveGroup(groupId: String) {
-        if (_selectedGroupId.value == groupId) _selectedGroupId.value = null
-        messenger.leaveGroup(groupId)
-    }
+    fun leaveGroup(groupId: String) = messenger.leaveGroup(groupId)
 
     fun sendGroupText(groupId: String, text: String) = text.trim().takeIf { it.isNotEmpty() }?.let { messenger.sendGroupText(groupId, it) } ?: false
 
@@ -252,7 +220,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateSettings(change: (AppSettings) -> AppSettings) = engine.settings.update(change)
-    fun hasLocationPermission() = engine.positionTracker.hasPermission()
     fun startPositionTracking() { if (!engine.settings.settings.value.useFixedPosition) engine.positionTracker.start() }
     fun stopPositionTracking() = engine.positionTracker.stop()
 

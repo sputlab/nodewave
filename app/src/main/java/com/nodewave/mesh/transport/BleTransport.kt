@@ -129,6 +129,15 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         /** Advertising is restarted this often, cheaply, in case it died unnoticed. */
         private const val ADV_REFRESH_MS = 240_000L
         private const val ADV_RETRY_MS = 1_500L
+        /**
+         * A connectable advertisement ends when a central connects, and the phone is supposed to resume it. A Mi Note 10
+         * (Android 11) does not: after the first inbound link it reported "advertising" while nobody could hear it, so
+         * it saw its neighbours and they pruned it 15 s later, until the next [ADV_REFRESH_MS]. So advertising is
+         * restarted this long after an inbound link closes, at most once per [ADV_KICK_GAP_MS] (each restart changes
+         * the random address the neighbours dial).
+         */
+        private const val ADV_KICK_DELAY_MS = 1_000L
+        private const val ADV_KICK_GAP_MS = 8_000L
         private const val RESTART_PAUSE_MS = 500L
         private const val RECENT_TRAFFIC_MS = 30_000L
         private const val DESIRED_MTU = 247
@@ -172,6 +181,9 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     @Volatile private var txCharacteristic: BluetoothGattCharacteristic? = null
     private var reaperJob: Job? = null
     private var watchdogJob: Job? = null
+    @Volatile private var advKickJob: Job? = null
+    @Volatile private var advOverlapUnsupported = false
+    private val advKickPending = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var lastScanResultAt = SystemClock.elapsedRealtime()
     @Volatile private var fruitlessScanRestarts = 0
     private var rawAtLastCheck = 0
@@ -267,6 +279,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         pruneJob?.cancel(); pruneJob = null
         reaperJob?.cancel(); reaperJob = null
         watchdogJob?.cancel(); watchdogJob = null
+        advKickJob?.cancel(); advKickJob = null
         clientLinks.values.toList().forEach { it.close() }
         serverLinks.clear()
         runCatching {
@@ -313,9 +326,12 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
             override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
                 MeshLog.d("GATT server connection ${device.address} status=$status state=${stateName(newState)}")
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    serverLinks[device.address] = ServerLink(device)
+                    // the server also hears about the links we open ourselves; those carry the address we dialled
+                    serverLinks[device.address] = ServerLink(device, inbound = !clientLinks.containsKey(device.address))
                 } else {
-                    serverLinks.remove(device.address)?.pendingNotify?.complete(-1)
+                    val link = serverLinks.remove(device.address)
+                    link?.pendingNotify?.complete(-1)
+                    if (link?.inbound == true) refreshAdvertisingSoon("inbound link ${device.address} closed")
                 }
             }
 
@@ -916,6 +932,48 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
         startScanJob(adapter)
     }
 
+    /** See [ADV_KICK_DELAY_MS]. Safe to call from a Bluetooth callback thread. */
+    private fun refreshAdvertisingSoon(reason: String) {
+        if (advOverlapUnsupported) return
+        advKickPending.set(true)
+        if (advKickJob?.isActive == true) return
+        advKickJob = scope.launch {
+            while (advKickPending.getAndSet(false)) {
+                delay(ADV_KICK_DELAY_MS)
+                lifecycleMutex.withLock {
+                    if (_state.value == TransportState.ACTIVE) {
+                        MeshLog.d("Advertising renewal: $reason")
+                        runCatching { renewAdvertising() }.onFailure { MeshLog.e("Advertising renewal failed", it) }
+                    }
+                }
+                delay(ADV_KICK_GAP_MS)
+            }
+        }
+    }
+
+    /**
+     * Starts a new advertisement and only then stops the old one, so there is no moment when nobody can hear us (a
+     * restart that stops first leaves a gap in which a neighbour dialling our address times out). If the new one cannot
+     * start, the old one stays.
+     */
+    private suspend fun renewAdvertising() {
+        val adapter = bluetoothManager?.adapter ?: return
+        val old = advertiseCallback
+        advertiseCallback = null
+        try {
+            startAdvertising(adapter, advertisedName)
+        } catch (e: Exception) {
+            // the old advertisement is still on air: keep it, and do not try again on a phone that cannot overlap two
+            // (an Honor View 10 answers error 9) and that has not been seen to need it
+            advertiseCallback = old
+            advertising = old != null
+            advOverlapUnsupported = true
+            MeshLog.d("Advertising renewal not possible on this phone (${e.message}): keeping the current advertisement")
+            return
+        }
+        old?.let { runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(it) } }
+    }
+
     private suspend fun restartAdvertising() {
         val adapter = bluetoothManager?.adapter ?: return
         advertiseCallback?.let { runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(it) } }
@@ -928,7 +986,7 @@ class BleTransport(context: Context, private val localNodeId: String) : MeshTran
     // ---------------------------------------------------------------- links
 
     /** A device connected to our GATT server; we can answer it with notifications while it stays connected. */
-    private class ServerLink(val device: BluetoothDevice) {
+    private class ServerLink(val device: BluetoothDevice, val inbound: Boolean = true) {
         @Volatile var subscribed = false
         @Volatile var mtu = 23
         val notifyLock = Mutex()

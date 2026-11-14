@@ -4,7 +4,7 @@
 
 Off-Grid Mesh Communication System for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.12.3** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
+**Status: v0.13.0** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
 
 ## Screenshots
 
@@ -21,9 +21,9 @@ Off-Grid Mesh Communication System for Android. Phones talk to each other direct
 <img src="docs/images/screens/splash.png" width="180" alt="Splash screen">
 </p>
 
-Taken on real phones talking over Bluetooth (the two nodes on the map are given a fixed position on a hiking trail for the picture). Website: [nodewave.org](https://nodewave.org) (source in [sputlab/nodewave-website](https://github.com/sputlab/nodewave-website)).
+Taken on real phones talking over Bluetooth, with dummy names and a fixed position in the Dolomites for the map pictures (no real data). More in [docs/images/promo](docs/images/promo). Website: [nodewave.org](https://nodewave.org) (source in [sputlab/nodewave-website](https://github.com/sputlab/nodewave-website)).
 
-## Features (v0.12.3)
+## Features (v0.13.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Identity key pair per install; the node ID is derived from the public key, so peers are recognised even when BLE addresses rotate and an ID cannot be claimed by someone without the key.
@@ -39,8 +39,8 @@ Taken on real phones talking over Bluetooth (the two nodes on the map are given 
 - Live list of nodes: direct ones with signal strength (RSSI, dBm), indirect ones as `via <neighbour>`.
 - Multi-hop relay with TTL and duplicate suppression; delivery ACKs travel back across the relays.
 - Free-text chat to a selected node or to all nodes, with delivery status (`sent` / `DELIVERED` / `FAILED`), plus the number of relays crossed.
-- Per-node ping and broadcast of "CIAO - 73".
-- On-screen `MESH_RADIO` log console.
+- **SOS**, **Ping all** and **Message to everyone** in an action bar visible in every section; per-node Ping and Chat buttons.
+- Tactical interface on a true-black background with a radar, a fixed header (node, radio state, medium) and four sections: Network, Comms, Map, Diag. The `MESH_RADIO` log console is in Diag.
 
 ## Requirements
 
