@@ -231,6 +231,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** The build number (versionCode) of the installed app. */
+    fun appBuild(): String = getApplication<Application>().let {
+        runCatching { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it.packageManager.getPackageInfo(it.packageName, 0)).toString() }.getOrNull() ?: "?"
+    }
+
     fun appVersion(): String = getApplication<Application>().let {
         runCatching { it.packageManager.getPackageInfo(it.packageName, 0).versionName }.getOrNull() ?: "?"
     }

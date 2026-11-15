@@ -47,7 +47,9 @@ import com.nodewave.mesh.ui.components.RadarView
 import com.nodewave.mesh.ui.components.Segmented
 import com.nodewave.mesh.ui.components.SignalRssiIndicator
 import com.nodewave.mesh.ui.components.StatTile
+import com.nodewave.mesh.ui.components.NwIcon
 import com.nodewave.mesh.ui.components.TacButton
+import com.nodewave.mesh.ui.components.TacIconButton
 import com.nodewave.mesh.ui.components.TacKind
 import com.nodewave.mesh.ui.components.TacTextField
 import com.nodewave.mesh.ui.components.TacticalCard
@@ -75,7 +77,9 @@ data class NetworkUiState(
     /** The text of this node's contact QR code. */
     val contactCode: String = "",
     /** What the last contact scan found ("Verified: …" or a warning). */
-    val verifyResult: String? = null
+    val verifyResult: String? = null,
+    /** The compact display mode: a node is one row, with icon buttons beside its name. */
+    val compact: Boolean = false
 )
 
 sealed interface NetworkAction {
@@ -96,7 +100,7 @@ private enum class Filter(val label: String) { RANGE("In range"), ALL("All"), FA
 fun NetworkScreen(state: NetworkUiState, onAction: (NetworkAction) -> Unit, modifier: Modifier = Modifier) {
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(Filter.RANGE) }
-    var radarOpen by rememberSaveable { mutableStateOf(true) }
+    var radarOpen by rememberSaveable { mutableStateOf(false) } // closed until asked for: the list comes first
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var showCode by rememberSaveable { mutableStateOf(false) }
     var scanning by rememberSaveable { mutableStateOf(false) }
@@ -139,7 +143,7 @@ fun NetworkScreen(state: NetworkUiState, onAction: (NetworkAction) -> Unit, modi
         }
         items(shown, key = { it.id }) { n ->
             PeerCard(
-                n, state.pings[n.id], canPing = state.radioOn && n.visible,
+                n, state.pings[n.id], canPing = state.radioOn && n.visible, compact = state.compact,
                 onOpen = { selected = n.id }, onPing = { onAction(NetworkAction.Ping(n.id)) }, onChat = { onAction(NetworkAction.Chat(n.id)) }
             )
         }
@@ -193,10 +197,22 @@ fun NetworkScreen(state: NetworkUiState, onAction: (NetworkAction) -> Unit, modi
 @OptIn(ExperimentalLayoutApi::class)
 /** One peer: who it is and how far it can be trusted on the first line, how well we hear it on the right, what to do below. */
 @Composable
-private fun PeerCard(n: KnownNode, ping: MessageStatus?, canPing: Boolean, onOpen: () -> Unit, onPing: () -> Unit, onChat: () -> Unit) {
-    TacticalCard(emphasized = n.visible && n.direct, contentPadding = PaddingValues(12.dp)) {
-        Row(Modifier.fillMaxWidth().clickable(onClick = onOpen), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            NodeAvatar(n.id, n.name, 46.dp, verified = n.verified, dim = !n.visible)
+private fun PeerCard(n: KnownNode, ping: MessageStatus?, canPing: Boolean, compact: Boolean, onOpen: () -> Unit, onPing: () -> Unit, onChat: () -> Unit) {
+    val pingLabel = when (ping) {
+        MessageStatus.SENDING, MessageStatus.SENT -> "Pinging…"
+        MessageStatus.DELIVERED -> "Ping ✓"
+        MessageStatus.FAILED -> "No answer"
+        else -> "Ping"
+    }
+    val reach = when {
+        !n.visible -> lastSeenText(n.lastSeen)
+        n.direct -> "direct"
+        else -> "via ${n.viaName ?: "relay"}"
+    }
+    TacticalCard(emphasized = n.visible && n.direct, contentPadding = PaddingValues(if (compact) 10.dp else 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)) {
+          Row(Modifier.weight(1f).clickable(onClick = onOpen), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 12.dp)) {
+            NodeAvatar(n.id, n.name, if (compact) 40.dp else 46.dp, verified = n.verified, dim = !n.visible)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(n.name, color = NwText, fontFamily = Sans, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
@@ -207,28 +223,30 @@ private fun PeerCard(n: KnownNode, ping: MessageStatus?, canPing: Boolean, onOpe
                     Chip(if (n.verified) "verified" else "unverified", if (n.verified) NodeCyan else NwTextDim)
                     if (n.secure) Chip("encrypted", MeshTeal)
                     if (n.position != null) Chip("position", NodeDeepBlue)
+                    // the full ID takes the whole line in the compact row: how the node is reached becomes a label
+                    if (compact) Chip(reach, if (!n.visible) NwTextDim else if (n.direct) WaveGreen else MeshTeal)
                 }
                 Text(
-                    groupedId(n.id.take(8)) + "  ·  " + when {
-                        !n.visible -> lastSeenText(n.lastSeen)
-                        n.direct -> "direct"
-                        else -> "via ${n.viaName ?: "relay"}"
-                    },
+                    if (compact) groupedId(n.id) else groupedId(n.id) + "  ·  " + reach,
                     color = NwTextDim, fontFamily = Mono, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
                 )
             }
             if (n.visible && n.direct) SignalRssiIndicator(n.rssi)
+          }
+          if (compact) {
+              // the answer to the ping is the button's colour: teal while waiting, green delivered, red no answer
+              val kind = when (ping) {
+                  MessageStatus.DELIVERED -> TacKind.TRANSMIT
+                  MessageStatus.FAILED -> TacKind.DANGER
+                  MessageStatus.SENDING, MessageStatus.SENT -> TacKind.SECONDARY
+                  else -> TacKind.OUTLINE
+              }
+              TacIconButton(NwIcon.PING, pingLabel, onPing, kind = kind, enabled = canPing)
+              TacIconButton(NwIcon.COMMS, "Chat", onChat, kind = TacKind.PRIMARY)
+          }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TacButton(
-                when (ping) {
-                    MessageStatus.SENDING, MessageStatus.SENT -> "Pinging…"
-                    MessageStatus.DELIVERED -> "Ping ✓"
-                    MessageStatus.FAILED -> "No answer"
-                    else -> "Ping"
-                },
-                onPing, Modifier.weight(1f), if (ping == MessageStatus.DELIVERED) TacKind.TRANSMIT else TacKind.OUTLINE, enabled = canPing
-            )
+        if (!compact) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TacButton(pingLabel, onPing, Modifier.weight(1f), if (ping == MessageStatus.DELIVERED) TacKind.TRANSMIT else TacKind.OUTLINE, enabled = canPing)
             TacButton("Chat", onChat, Modifier.weight(1f), TacKind.PRIMARY)
         }
     }

@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -30,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -89,7 +91,9 @@ data class SettingsUiState(
     /** The outcome of the last map import, deletion or cache clearing. */
     val mapNote: String? = null,
     val codecReport: String? = null,
-    val appVersion: String = ""
+    val appVersion: String = "",
+    /** The build number (versionCode). */
+    val appBuild: String = ""
 )
 
 sealed interface SettingsAction {
@@ -222,9 +226,22 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
         }
         item {
             Section("About", "NodeWave ${state.appVersion}") {
-                Text("NodeWave ${state.appVersion}", color = NwText, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Note("Off-Grid Mesh Communication System over Bluetooth LE. Open source, AGPL-3.0-or-later. No accounts, no servers, no tracking.")
-                Text("github.com/sputlab/nodewave", color = NodeCyan, fontFamily = Mono, fontSize = 11.sp)
+                val uri = LocalUriHandler.current
+                Text("NodeWave", color = NwText, fontFamily = Sans, fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 1.sp)
+                Note("Off-Grid Mesh Communication System. Phones talk to each other directly: no internet, no accounts, no servers, no tracking.")
+                SectionLabel("App")
+                Fact("Version", "${state.appVersion} (build ${state.appBuild})")
+                Fact("Licence", "AGPL-3.0-or-later")
+                Fact("Encryption", "ECDH P-256 · AES-256-GCM")
+                Fact("Radios", "Bluetooth LE · Wi-Fi Direct")
+                SectionLabel("This phone")
+                Fact("Node ID", groupedId(state.nodeId))
+                Fact("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                Fact("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+                SectionLabel("Links")
+                Link("Website", "nodewave.org") { uri.openUri("https://nodewave.org") }
+                Link("Source code", "github.com/sputlab/nodewave") { uri.openUri("https://github.com/sputlab/nodewave") }
+                Note("The links open in your browser; the app itself uses the internet only to download maps when you ask.")
             }
         }
     }
@@ -249,6 +266,25 @@ private fun GroupLabel(text: String) {
 private fun profile(name: String) = when (name) { "LOW_POWER" -> "save"; "LOW_LATENCY" -> "fast"; else -> "balanced" }
 private fun power(p: AdvertisePower) = when (p) { AdvertisePower.ULTRA_LOW -> "min"; AdvertisePower.LOW -> "low"; AdvertisePower.MEDIUM -> "mid"; AdvertisePower.HIGH -> "max" }
 private fun who(name: String) = when (name) { "OFF" -> "Nobody"; "VERIFIED" -> "Verified contacts"; else -> "Everyone" }
+
+/** One fact: what it is on the left, its value in monospace on the right. */
+@Composable
+private fun Fact(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, color = NwTextDim, fontFamily = Sans, fontSize = 13.sp)
+        Text(value, color = NwText, fontFamily = Mono, fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
+    }
+}
+
+/** A fact that is an address: tapping it opens the browser. */
+@Composable
+private fun Link(label: String, address: String, onOpen: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 40.dp).clickable(onClick = onOpen), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, color = NwTextDim, fontFamily = Sans, fontSize = 13.sp)
+        Text(address, color = NodeCyan, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
+        NwGlyph(NwIcon.CHEVRON_RIGHT, NodeCyan, size = 16.dp)
+    }
+}
 
 /** The explanation under a setting. */
 @Composable

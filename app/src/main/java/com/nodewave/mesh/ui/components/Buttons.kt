@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -24,9 +25,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nodewave.mesh.ui.theme.EmergencyRed
@@ -87,6 +92,35 @@ fun TacButton(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = color, disabledContentColor = NwTextDim.copy(alpha = 0.6f)),
             content = { label() }
         )
+    }
+}
+
+/**
+ * A square button with an icon instead of a word, for rows where the full-width buttons would cost a line.
+ * [contentDescription] says what the word would have said.
+ */
+@Composable
+fun TacIconButton(
+    icon: NwIcon,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    kind: TacKind = TacKind.OUTLINE,
+    enabled: Boolean = true,
+    size: Dp = TouchTarget.Compact
+) {
+    val fill = when (kind) { TacKind.TRANSMIT -> WaveNeon; TacKind.PRIMARY -> NodeCyan; TacKind.EMERGENCY -> EmergencyRed; else -> null }
+    val line = when (kind) { TacKind.DANGER -> EmergencyRed; TacKind.SECONDARY -> MeshTeal; else -> NodeCyan }
+    val shape = RoundedCornerShape(12.dp)
+    Box(
+        modifier.size(size).clip(shape)
+            .background(if (fill != null) (if (enabled) fill else NwLine) else Color.Transparent)
+            .let { if (fill == null) it.border(1.5.dp, if (enabled) line.copy(alpha = 0.85f) else NwLine, shape) else it }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center
+    ) {
+        NwGlyph(icon, when { !enabled -> NwTextDim.copy(alpha = 0.6f); fill != null -> if (kind == TacKind.EMERGENCY) Color.White else Color.Black; else -> line }, size = size * 0.5f)
     }
 }
 

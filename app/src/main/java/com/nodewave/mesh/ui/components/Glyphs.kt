@@ -19,7 +19,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /** The app's icons, drawn here so no icon library is needed. */
-enum class NwIcon { NETWORK, COMMS, MAP, DIAGNOSTICS, GEAR, BLUETOOTH, WIFI, LORA, POWER, CHEVRON_DOWN, CHEVRON_RIGHT }
+enum class NwIcon { NETWORK, COMMS, MAP, DIAGNOSTICS, GEAR, BLUETOOTH, WIFI, LORA, POWER, PING, CHEVRON_DOWN, CHEVRON_RIGHT }
 
 @Composable
 fun NwGlyph(icon: NwIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -77,6 +77,14 @@ fun NwGlyph(icon: NwIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                 val c = Offset(w * .5f, h * .55f); val r = w * .34f
                 drawArc(color, -60f, 300f, false, Offset(c.x - r, c.y - r), Size(r * 2, r * 2), style = Stroke(line * 1.25f, cap = StrokeCap.Round))
                 drawLine(color, Offset(w * .5f, h * .1f), Offset(w * .5f, h * .5f), line * 1.25f, StrokeCap.Round)
+            }
+            NwIcon.PING -> {
+                // a pulse leaving a point: a dot with a wave on each side
+                drawCircle(color, w * .09f, center)
+                for (r in listOf(.24f, .42f)) {
+                    drawArc(color, -50f, 100f, false, Offset(center.x - w * r, center.y - w * r), Size(w * r * 2, w * r * 2), style = st)
+                    drawArc(color, 130f, 100f, false, Offset(center.x - w * r, center.y - w * r), Size(w * r * 2, w * r * 2), style = st)
+                }
             }
             NwIcon.CHEVRON_DOWN -> drawPath(Path().apply { moveTo(w * .26f, h * .38f); lineTo(w * .5f, h * .62f); lineTo(w * .74f, h * .38f) }, color, style = st)
             NwIcon.CHEVRON_RIGHT -> drawPath(Path().apply { moveTo(w * .38f, h * .26f); lineTo(w * .62f, h * .5f); lineTo(w * .38f, h * .74f) }, color, style = st)

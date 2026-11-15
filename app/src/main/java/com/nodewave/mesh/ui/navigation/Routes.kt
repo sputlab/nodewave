@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nodewave.mesh.MainViewModel
 import com.nodewave.mesh.data.MapFiles
+import com.nodewave.mesh.data.UiDensity
 import com.nodewave.mesh.protocol.Conversation
 import com.nodewave.mesh.protocol.MessageStatus
 import com.nodewave.mesh.protocol.groupTimeline
@@ -52,6 +53,7 @@ internal fun NetworkRoute(vm: MainViewModel, radioOn: Boolean, onChat: (String) 
     val known by vm.knownNodes.collectAsStateWithLifecycle()
     val messages by vm.messages.collectAsStateWithLifecycle()
     val nodeName by vm.nodeName.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var verifyResult by remember { mutableStateOf<String?>(null) }
     val now by produceState(System.currentTimeMillis()) { while (true) { delay(2_000); value = System.currentTimeMillis() } }
@@ -63,7 +65,7 @@ internal fun NetworkRoute(vm: MainViewModel, radioOn: Boolean, onChat: (String) 
     }
     val contactCode = remember(nodeName) { vm.contactCodeText() }
     NetworkScreen(
-        NetworkUiState(radioOn, nodeName, vm.localNodeId, known, pings, contactCode, verifyResult),
+        NetworkUiState(radioOn, nodeName, vm.localNodeId, known, pings, contactCode, verifyResult, compact = settings.uiDensity == UiDensity.COMPACT),
         onAction = { action ->
             when (action) {
                 is NetworkAction.Ping -> vm.pingPeer(action.nodeId)
@@ -189,11 +191,12 @@ internal fun SettingsRoute(vm: MainViewModel, onDiagnostics: () -> Unit) {
     var mapNote by remember { mutableStateOf<String?>(null) }
     var codecReport by remember { mutableStateOf<String?>(null) }
     val version = remember { vm.appVersion() }
+    val build = remember { vm.appBuild() }
 
     SettingsScreen(
         SettingsUiState(
             settings, nodeName, vm.localNodeId, own, usb.map { (name, ids, granted) -> UsbDeviceInfo(name, ids, granted) },
-            download, mapNote, codecReport, version
+            download, mapNote, codecReport, version, build
         ),
         onAction = { action ->
             when (action) {

@@ -7,11 +7,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ### Added
 - **Compact display mode** (Settings → Display): the same screens drawn at 85 %, sizes, spacing and text alike, so more nodes, messages and figures fit on a screen. Standard stays the default.
+- In compact mode a node is one row: full ID, and square Ping and Chat icon buttons beside the name (the ping button turns teal while waiting, green when answered, red when not).
+- Settings → About lists version and build, licence, encryption, radios, this phone's node ID, model and Android version, and links to nodewave.org and the source.
 - A LoRa icon next to Bluetooth and Wi-Fi Direct in the header (faint: no board is supported yet).
 
 ### Changed
 - **Header on one line.** The radio control moved next to the node's name: the state in a word, one icon per medium (lit while it carries the mesh, dim when only available, faint when absent) and a power button instead of the START/STOP text.
 - **Settings is a tab**, in the place of Diag; the gear left the header. **Diagnostics** opens from Settings (System → Diagnostics) and goes back there.
+- The header and the node list show the full node ID (four groups, `ID: 5ab6 6e00 e204 1830`) instead of the first half; the radar starts closed.
 - **Settings sections are closed until tapped** and grouped (This node, Radios, Messages, Position and maps, System); a closed section shows what is set inside it.
 
 ## [0.13.0] - 2026-11-14

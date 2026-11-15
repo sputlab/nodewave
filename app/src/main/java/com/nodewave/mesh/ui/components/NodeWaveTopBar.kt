@@ -56,7 +56,7 @@ fun NodeWaveTopBar(state: TopBarUiState, onToggleRadio: () -> Unit, modifier: Mo
             )
             Column(Modifier.weight(1f)) {
                 Text(state.nodeName, color = NwText, fontFamily = Sans, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("ID ${groupedId(state.nodeId.take(8))}", color = NwTextDim, fontFamily = Mono, fontSize = 11.sp, maxLines = 1)
+                Text("ID: ${groupedId(state.nodeId)}", color = NwTextDim, fontFamily = Mono, fontSize = 10.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             }
             TransportStatusPill(state.transport, onToggleRadio)
         }
