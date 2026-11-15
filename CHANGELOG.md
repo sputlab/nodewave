@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-15
+
+A denser interface, and a tidier header and Settings.
+
 ### Added
 - **Compact display mode** (Settings → Display): the same screens drawn at 85 %, sizes, spacing and text alike, so more nodes, messages and figures fit on a screen. Standard stays the default.
 - In compact mode a node is one row: full ID, and square Ping and Chat icon buttons beside the name (the ping button turns teal while waiting, green when answered, red when not).
