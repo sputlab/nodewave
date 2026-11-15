@@ -32,6 +32,9 @@ data class LoraSettings(
 
 enum class LoraMode { TRANSPARENT, FIXED, WOR }
 
+/** How much the interface puts on a screen: [COMPACT] draws everything smaller and closer together. */
+enum class UiDensity { STANDARD, COMPACT }
+
 data class AppSettings(
     /** The name this node announces; empty means the phone's model. */
     val nodeName: String = "",
@@ -50,7 +53,9 @@ data class AppSettings(
     /** Always use the thinnest speech codec, whatever the link. */
     val voiceLowBandwidth: Boolean = false,
     /** Who may make this phone join a Wi-Fi Direct group for a big transfer. */
-    val fastLinkMode: com.nodewave.mesh.protocol.FastLinkMode = com.nodewave.mesh.protocol.FastLinkMode.VERIFIED
+    val fastLinkMode: com.nodewave.mesh.protocol.FastLinkMode = com.nodewave.mesh.protocol.FastLinkMode.VERIFIED,
+    /** Display density of the interface. */
+    val uiDensity: UiDensity = UiDensity.STANDARD
 )
 
 /** SharedPreferences-backed settings plus the "last opened" time of each conversation. */
@@ -95,6 +100,7 @@ class SettingsStore(context: Context) {
             voiceHoldToRecord = prefs.getBoolean("voice_hold", true),
             voiceLowBandwidth = prefs.getBoolean("voice_low", false),
             fastLinkMode = enumOf("fast_link", d.fastLinkMode, com.nodewave.mesh.protocol.FastLinkMode.entries.toTypedArray()),
+            uiDensity = enumOf("ui_density", d.uiDensity, UiDensity.entries.toTypedArray()),
             lora = LoraSettings(
                 powerDbm = prefs.getInt("lora_power", d.lora.powerDbm),
                 airRateKbps = prefs.getFloat("lora_rate", d.lora.airRateKbps.toFloat()).toDouble(),
@@ -115,6 +121,7 @@ class SettingsStore(context: Context) {
             putString("tile_url", s.tileUrl); putString("map_archive", s.mapArchive)
             putBoolean("voice_hold", s.voiceHoldToRecord); putBoolean("voice_low", s.voiceLowBandwidth)
             putString("fast_link", s.fastLinkMode.name)
+            putString("ui_density", s.uiDensity.name)
             putInt("lora_power", s.lora.powerDbm); putFloat("lora_rate", s.lora.airRateKbps.toFloat()); putInt("lora_channel", s.lora.channel)
             putString("lora_mode", s.lora.mode.name); putInt("lora_packet", s.lora.packetBytes)
         }.apply()

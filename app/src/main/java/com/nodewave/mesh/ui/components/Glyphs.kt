@@ -19,7 +19,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /** The app's icons, drawn here so no icon library is needed. */
-enum class NwIcon { NETWORK, COMMS, MAP, DIAGNOSTICS, GEAR }
+enum class NwIcon { NETWORK, COMMS, MAP, DIAGNOSTICS, GEAR, BLUETOOTH, WIFI, LORA, POWER, CHEVRON_DOWN, CHEVRON_RIGHT }
 
 @Composable
 fun NwGlyph(icon: NwIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -52,6 +52,34 @@ fun NwGlyph(icon: NwIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                 drawPath(Path().apply { moveTo(w * .26f, h * .38f); lineTo(w * .42f, h * .5f); lineTo(w * .26f, h * .62f) }, color, style = st)
                 drawLine(color, Offset(w * .52f, h * .64f), Offset(w * .74f, h * .64f), line, StrokeCap.Round)
             }
+            NwIcon.BLUETOOTH -> drawPath(Path().apply {
+                moveTo(w * .28f, h * .3f); lineTo(w * .7f, h * .68f); lineTo(w * .5f, h * .9f)
+                lineTo(w * .5f, h * .1f); lineTo(w * .7f, h * .32f); lineTo(w * .28f, h * .7f)
+            }, color, style = st)
+            NwIcon.WIFI -> {
+                val c = Offset(w * .5f, h * .8f)
+                for (r in listOf(.66f, .44f, .22f)) drawArc(color, 225f, 90f, false, Offset(c.x - w * r, c.y - w * r), Size(w * r * 2, w * r * 2), style = st)
+                drawCircle(color, line * 0.9f, c)
+            }
+            NwIcon.LORA -> {
+                // a mast with waves leaving its tip on both sides
+                val tip = Offset(w * .5f, h * .36f)
+                drawLine(color, tip, Offset(w * .32f, h * .92f), line, StrokeCap.Round)
+                drawLine(color, tip, Offset(w * .68f, h * .92f), line, StrokeCap.Round)
+                drawLine(color, Offset(w * .4f, h * .7f), Offset(w * .6f, h * .7f), line, StrokeCap.Round)
+                drawCircle(color, line, tip)
+                for (r in listOf(.24f, .42f)) {
+                    drawArc(color, -40f, 80f, false, Offset(tip.x - w * r, tip.y - w * r), Size(w * r * 2, w * r * 2), style = st)
+                    drawArc(color, 140f, 80f, false, Offset(tip.x - w * r, tip.y - w * r), Size(w * r * 2, w * r * 2), style = st)
+                }
+            }
+            NwIcon.POWER -> {
+                val c = Offset(w * .5f, h * .55f); val r = w * .34f
+                drawArc(color, -60f, 300f, false, Offset(c.x - r, c.y - r), Size(r * 2, r * 2), style = Stroke(line * 1.25f, cap = StrokeCap.Round))
+                drawLine(color, Offset(w * .5f, h * .1f), Offset(w * .5f, h * .5f), line * 1.25f, StrokeCap.Round)
+            }
+            NwIcon.CHEVRON_DOWN -> drawPath(Path().apply { moveTo(w * .26f, h * .38f); lineTo(w * .5f, h * .62f); lineTo(w * .74f, h * .38f) }, color, style = st)
+            NwIcon.CHEVRON_RIGHT -> drawPath(Path().apply { moveTo(w * .38f, h * .26f); lineTo(w * .62f, h * .5f); lineTo(w * .38f, h * .74f) }, color, style = st)
             NwIcon.GEAR -> {
                 drawCircle(color, w * .15f, center, style = st)
                 drawCircle(color, w * .3f, center, style = st)

@@ -31,6 +31,8 @@ object TouchTarget {
     val Standard = 56.dp
     /** Primary and emergency actions. */
     val Primary = 64.dp
+    /** The radio switch on the header's title line: smaller than an operational button so the header stays one line. */
+    val Header = 48.dp
     /** Secondary controls inside dialogs and dense settings rows. */
     val Compact = 44.dp
 }

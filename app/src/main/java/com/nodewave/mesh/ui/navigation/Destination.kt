@@ -10,7 +10,7 @@ import com.nodewave.mesh.ui.components.NwIcon
 enum class Destination(
     val label: String,
     val icon: NwIcon,
-    /** Shown in the tab bar; the others are reached from the header. */
+    /** Shown in the tab bar; the others are reached from inside a section. */
     val inTabBar: Boolean = true,
     /** The ping, message and SOS bar sits above the tabs here. */
     val showsActionBar: Boolean = true
@@ -18,8 +18,9 @@ enum class Destination(
     NETWORK("Network", NwIcon.NETWORK),
     COMMS("Comms", NwIcon.COMMS),
     MAP("Map", NwIcon.MAP),
-    DIAGNOSTICS("Diag", NwIcon.DIAGNOSTICS, showsActionBar = false),
-    SETTINGS("Settings", NwIcon.GEAR, inTabBar = false, showsActionBar = false);
+    SETTINGS("Settings", NwIcon.GEAR, showsActionBar = false),
+    /** Opened from Settings: technical tools nobody needs while operating. */
+    DIAGNOSTICS("Diagnostics", NwIcon.DIAGNOSTICS, inTabBar = false, showsActionBar = false);
 
     companion object {
         val tabs: List<Destination> = entries.filter { it.inTabBar }

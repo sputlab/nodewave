@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+### Added
+- **Compact display mode** (Settings → Display): the same screens drawn at 85 %, sizes, spacing and text alike, so more nodes, messages and figures fit on a screen. Standard stays the default.
+- A LoRa icon next to Bluetooth and Wi-Fi Direct in the header (faint: no board is supported yet).
+
+### Changed
+- **Header on one line.** The radio control moved next to the node's name: the state in a word, one icon per medium (lit while it carries the mesh, dim when only available, faint when absent) and a power button instead of the START/STOP text.
+- **Settings is a tab**, in the place of Diag; the gear left the header. **Diagnostics** opens from Settings (System → Diagnostics) and goes back there.
+- **Settings sections are closed until tapped** and grouped (This node, Radios, Messages, Position and maps, System); a closed section shows what is set inside it.
+
 ## [0.13.0] - 2026-11-14
 
 New interface, SOS, and a fix for phones that could not be reached.

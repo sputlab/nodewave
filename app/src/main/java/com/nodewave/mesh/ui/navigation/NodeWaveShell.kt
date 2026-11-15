@@ -64,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nodewave.mesh.MainViewModel
 import com.nodewave.mesh.R
+import com.nodewave.mesh.data.UiDensity
 import com.nodewave.mesh.protocol.Conversation
 import com.nodewave.mesh.protocol.FastLinkMode
 import com.nodewave.mesh.transport.BleTransport
@@ -72,6 +73,7 @@ import com.nodewave.mesh.ui.components.ActionBarUiState
 import com.nodewave.mesh.ui.components.EmergencyActionBar
 import com.nodewave.mesh.ui.components.NodeWaveTabBar
 import com.nodewave.mesh.ui.components.NodeWaveTopBar
+import com.nodewave.mesh.ui.components.NwIcon
 import com.nodewave.mesh.ui.components.TabItem
 import com.nodewave.mesh.ui.components.TopBarUiState
 import com.nodewave.mesh.ui.components.TransportMedium
@@ -79,6 +81,7 @@ import com.nodewave.mesh.ui.components.TransportUiState
 import com.nodewave.mesh.ui.screens.emergency.BroadcastSheet
 import com.nodewave.mesh.ui.screens.emergency.BroadcastUiState
 import com.nodewave.mesh.ui.screens.emergency.SosSheet
+import com.nodewave.mesh.ui.theme.DisplayDensity
 import com.nodewave.mesh.ui.theme.Mono
 import com.nodewave.mesh.ui.theme.NodeCyan
 import com.nodewave.mesh.ui.theme.NodeWaveBrandGradient
@@ -105,7 +108,6 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     val ownPosition by vm.ownPosition.collectAsStateWithLifecycle()
 
     var destination by rememberSaveable { mutableStateOf(Destination.NETWORK) }
-    var lastTab by rememberSaveable { mutableStateOf(Destination.NETWORK) }
     var chatKey by rememberSaveable { mutableStateOf<String?>(null) }
     var mapFocus by rememberSaveable { mutableStateOf<String?>(null) }
     var sheet by rememberSaveable { mutableStateOf(Sheet.NONE) }
@@ -114,7 +116,6 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
     fun go(to: Destination) {
         if (to == Destination.COMMS && destination == Destination.COMMS) chatKey = null // the tab again: back to the list
-        if (to.inTabBar) lastTab = to
         destination = to
     }
     fun openChat(nodeId: String) { chatKey = Conversation.personalKey(nodeId); go(Destination.COMMS) }
@@ -140,24 +141,27 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         vm.startPositionTracking() // does nothing unless the user granted location
         onPauseOrDispose { vm.stopPositionTracking() }
     }
-    BackHandler(enabled = destination == Destination.SETTINGS) { go(lastTab) }
+    // Diagnostics is a page of Settings: back returns there
+    BackHandler(enabled = destination == Destination.DIAGNOSTICS) { go(Destination.SETTINGS) }
 
-    val media = remember(settings.fastLinkMode) {
-        listOfNotNull(TransportMedium("BLE", active = true), TransportMedium("Wi-Fi Direct", active = false).takeIf { settings.fastLinkMode != FastLinkMode.OFF })
+    val media = remember(settings.fastLinkMode, radioOn) {
+        listOf(
+            TransportMedium("Bluetooth LE", NwIcon.BLUETOOTH, available = true, active = radioOn),
+            // Wi-Fi Direct comes up only for a big transfer; LoRa boards are not supported yet
+            TransportMedium("Wi-Fi Direct", NwIcon.WIFI, available = settings.fastLinkMode != FastLinkMode.OFF, active = false),
+            TransportMedium("LoRa", NwIcon.LORA, available = false, active = false)
+        )
     }
     val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val inConversation = destination == Destination.COMMS && chatKey != null
 
+    DisplayDensity(compact = settings.uiDensity == UiDensity.COMPACT) {
     Box(Modifier.fillMaxSize().background(NwBlack)) {
         Scaffold(
             containerColor = NwBlack,
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
-                NodeWaveTopBar(
-                    TopBarUiState(nodeName, vm.localNodeId, TransportUiState(transport, media), settingsOpen = destination == Destination.SETTINGS),
-                    onToggleRadio = toggleRadio,
-                    onSettings = { if (destination == Destination.SETTINGS) go(lastTab) else go(Destination.SETTINGS) }
-                )
+                NodeWaveTopBar(TopBarUiState(nodeName, vm.localNodeId, TransportUiState(transport, media)), onToggleRadio = toggleRadio)
             },
             bottomBar = {
                 // the keyboard takes the thumb zone: the bars step aside so the text field sits right on top of it
@@ -172,7 +176,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                     }
                     NodeWaveTabBar(
                         Destination.tabs.map { TabItem(it.label, it.icon, badge = if (it == Destination.COMMS) unread else 0) },
-                        selected = Destination.tabs.indexOf(destination),
+                        selected = Destination.tabs.indexOf(if (destination == Destination.DIAGNOSTICS) Destination.SETTINGS else destination),
                         onSelect = { go(Destination.tabs[it]) }
                     )
                 }
@@ -188,8 +192,8 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                         Destination.NETWORK -> NetworkRoute(vm, radioOn, onChat = ::openChat, onShowOnMap = { id -> mapFocus = id; go(Destination.MAP) })
                         Destination.COMMS -> CommsRoute(vm, radioOn, chatKey, onOpen = { chatKey = it })
                         Destination.MAP -> MapRoute(vm, mapFocus, onFocusConsumed = { mapFocus = null })
-                        Destination.DIAGNOSTICS -> DiagnosticsRoute(vm, radioOn)
-                        Destination.SETTINGS -> SettingsRoute(vm, onClose = { go(lastTab) })
+                        Destination.DIAGNOSTICS -> DiagnosticsRoute(vm, radioOn, onBack = { go(Destination.SETTINGS) })
+                        Destination.SETTINGS -> SettingsRoute(vm, onDiagnostics = { go(Destination.DIAGNOSTICS) })
                     }
                 }
             }
@@ -206,6 +210,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         var splash by rememberSaveable { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(1700); splash = false }
         AnimatedVisibility(splash, enter = fadeIn(), exit = fadeOut(tween(450))) { Splash(onSkip = { splash = false }) }
+    }
     }
 }
 

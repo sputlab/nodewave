@@ -72,6 +72,8 @@ data class DiagnosticsUiState(
 )
 
 sealed interface DiagnosticsAction {
+    /** Back to Settings, where this page is opened from. */
+    data object Back : DiagnosticsAction
     data class SetIgnoreDirect(val enabled: Boolean) : DiagnosticsAction
     data class RunBench(val peerId: String) : DiagnosticsAction
     data class SetBenchRepeat(val peerId: String?) : DiagnosticsAction
@@ -89,7 +91,11 @@ private enum class Section(val label: String) { CONSOLE("Console"), ACTIVITY("Ac
 fun DiagnosticsScreen(state: DiagnosticsUiState, onAction: (DiagnosticsAction) -> Unit, modifier: Modifier = Modifier) {
     var section by rememberSaveable { mutableStateOf(Section.CONSOLE) }
     Column(modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Segmented(Section.entries.map { it to it.label }, section, { section = it }, Modifier.padding(top = 12.dp))
+        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            TacButton("‹ Settings", { onAction(DiagnosticsAction.Back) }, kind = TacKind.SECONDARY, compact = true)
+            Text("DIAGNOSTICS", color = NwText, fontFamily = Sans, fontWeight = FontWeight.Black, fontSize = 18.sp, letterSpacing = 1.sp)
+        }
+        Segmented(Section.entries.map { it to it.label }, section, { section = it })
         when (section) {
             Section.CONSOLE -> Console(state, onAction)
             Section.ACTIVITY -> Activity(state)

@@ -5,10 +5,12 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +25,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +41,7 @@ import com.nodewave.mesh.data.LoraMode
 import com.nodewave.mesh.data.LoraSettings
 import com.nodewave.mesh.data.MapDownloader
 import com.nodewave.mesh.data.MapFiles
+import com.nodewave.mesh.data.UiDensity
 import com.nodewave.mesh.protocol.FastLinkMode
 import com.nodewave.mesh.protocol.GeoPosition
 import com.nodewave.mesh.protocol.NodeAdvertisement
@@ -45,7 +49,9 @@ import com.nodewave.mesh.protocol.PositionSharing
 import com.nodewave.mesh.transport.AdvertisePower
 import com.nodewave.mesh.transport.AdvertiseProfile
 import com.nodewave.mesh.transport.ScanProfile
-import com.nodewave.mesh.ui.components.Chip
+import com.nodewave.mesh.ui.components.CollapsibleCard
+import com.nodewave.mesh.ui.components.NwGlyph
+import com.nodewave.mesh.ui.components.NwIcon
 import com.nodewave.mesh.ui.components.SectionLabel
 import com.nodewave.mesh.ui.components.Segmented
 import com.nodewave.mesh.ui.components.TacButton
@@ -99,7 +105,7 @@ sealed interface SettingsAction {
     data object RemoveMapFile : SettingsAction
     data object ClearTiles : SettingsAction
     data object ClearHistory : SettingsAction
-    data object Close : SettingsAction
+    data object OpenDiagnostics : SettingsAction
 }
 
 private typealias Update = ((AppSettings) -> AppSettings) -> Unit
@@ -119,17 +125,28 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
     }
     val importMap = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) onAction(SettingsAction.ImportMap(uri)) }
 
-    BackHandler { onAction(SettingsAction.Close) }
-    LazyColumn(modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+    // every section starts closed: the screen is a table of contents, and a tap opens what you came for
+    var open by rememberSaveable { mutableStateOf(setOf<String>()) }
+    @Composable
+    fun Section(title: String, summary: String? = null, content: @Composable ColumnScope.() -> Unit) {
+        CollapsibleCard(title, title in open, { open = if (title in open) open - title else open + title }, summary = summary, content = content)
+    }
+
+    LazyColumn(modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
+        item { Text("SETTINGS", color = NwText, fontFamily = Sans, fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp, modifier = Modifier.padding(start = 4.dp)) }
+
+        item { GroupLabel("This node") }
+        item { Section("Identity", state.nodeName) { IdentityCard(state, onAction) } }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("SETTINGS", color = NwText, fontFamily = Sans, fontWeight = FontWeight.Black, fontSize = 20.sp, letterSpacing = 1.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
-                TacButton("Done", { onAction(SettingsAction.Close) }, kind = TacKind.PRIMARY, compact = true)
+            Section("Display", if (s.uiDensity == UiDensity.COMPACT) "Compact" else "Standard") {
+                Segmented(listOf(UiDensity.STANDARD to "Standard", UiDensity.COMPACT to "Compact"), s.uiDensity, { v -> update { it.copy(uiDensity = v) } })
+                Note("Compact draws everything smaller and closer together, so more nodes, messages and figures fit on a screen. Standard has larger buttons, easier to hit with gloves or on the move.")
             }
         }
-        item { IdentityCard(state, onAction) }
+
+        item { GroupLabel("Radios") }
         item {
-            TacticalCard(title = "Bluetooth radio") {
+            Section("Bluetooth", "Scan ${profile(s.radio.scan.name)} · announce ${profile(s.radio.advertise.name)} · power ${power(s.radio.power)}") {
                 SectionLabel("Scan")
                 Segmented(listOf(ScanProfile.LOW_POWER to "Save", ScanProfile.BALANCED to "Balanced", ScanProfile.LOW_LATENCY to "Fast"), s.radio.scan, { v -> update { it.copy(radio = it.radio.copy(scan = v)) } })
                 SectionLabel("Announce")
@@ -139,9 +156,16 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
                 Note("Faster scanning and a higher power find nodes sooner and from further away but use more battery. A change restarts the radio. Connections use the phone's own power level.")
             }
         }
-        item { LoraCard(s.lora, state.usb, update) { onAction(SettingsAction.RefreshUsb) } }
+        item { Section("Wi-Fi Direct", who(s.fastLinkMode.name)) { FastLinkCard(s.fastLinkMode, update) } }
         item {
-            TacticalCard(title = "Voice messages") {
+            Section("LoRa boards", if (state.usb.isEmpty()) "No board · ${s.lora.powerDbm} dBm · CH ${s.lora.channel}" else "${state.usb.size} USB · ${s.lora.powerDbm} dBm · CH ${s.lora.channel}") {
+                LoraCard(s.lora, state.usb, update) { onAction(SettingsAction.RefreshUsb) }
+            }
+        }
+
+        item { GroupLabel("Messages") }
+        item {
+            Section("Voice messages", (if (s.voiceHoldToRecord) "Hold to record" else "Tap to record") + if (s.voiceLowBandwidth) " · low bandwidth" else "") {
                 Segmented(listOf(true to "Hold to record", false to "Tap, tap, send"), s.voiceHoldToRecord, { v -> update { it.copy(voiceHoldToRecord = v) } })
                 Note(
                     if (s.voiceHoldToRecord) "Hold the microphone button while you speak, let go to send, slide left to cancel."
@@ -155,9 +179,16 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
                 state.codecReport?.let { Text(it, color = NwTextDim, fontFamily = Mono, fontSize = 10.sp) }
             }
         }
-        item { FastLinkCard(s.fastLinkMode, update) }
         item {
-            TacticalCard(title = "Position") {
+            Section("Chat history", "Stored encrypted on this phone") {
+                Note("Chats are stored encrypted on this phone.")
+                TacButton("Clear all chat history", { confirmClear = true }, kind = TacKind.DANGER, compact = true)
+            }
+        }
+
+        item { GroupLabel("Position and maps") }
+        item {
+            Section("Position", "Shared with ${who(s.positionSharing.name).lowercase()}" + if (s.useFixedPosition) " · fixed station" else "") {
                 SectionLabel("Who can see where you are")
                 Segmented(listOf(PositionSharing.OFF to "Nobody", PositionSharing.VERIFIED to "Verified", PositionSharing.EVERYONE to "Everyone"), s.positionSharing, { v ->
                     update { it.copy(positionSharing = v) }
@@ -174,15 +205,23 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
                 FixedPosition(s.useFixedPosition, s.fixedPosition, state.ownPosition, onChange = { use, p -> update { it.copy(useFixedPosition = use, fixedPosition = p) } })
             }
         }
-        item { MapCard(state, onAction, update) { importMap.launch(arrayOf("*/*")) } }
+        item { Section("Map", s.mapArchive ?: "No offline map") { MapCard(state, onAction, update) { importMap.launch(arrayOf("*/*")) } } }
+
+        item { GroupLabel("System") }
         item {
-            TacticalCard(title = "Data") {
-                Note("Chats are stored encrypted on this phone.")
-                TacButton("Clear all chat history", { confirmClear = true }, kind = TacKind.DANGER, compact = true)
+            TacticalCard(onClick = { onAction(SettingsAction.OpenDiagnostics) }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
+                Row(Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    NwGlyph(NwIcon.DIAGNOSTICS, NodeCyan, size = 22.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text("DIAGNOSTICS", color = NwText, fontFamily = Sans, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                        Text("Radio console, activity, link test", color = NwTextDim, fontFamily = Mono, fontSize = 11.sp, maxLines = 1)
+                    }
+                    NwGlyph(NwIcon.CHEVRON_RIGHT, NwTextDim, size = 20.dp)
+                }
             }
         }
         item {
-            TacticalCard(title = "About") {
+            Section("About", "NodeWave ${state.appVersion}") {
                 Text("NodeWave ${state.appVersion}", color = NwText, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Note("Off-Grid Mesh Communication System over Bluetooth LE. Open source, AGPL-3.0-or-later. No accounts, no servers, no tracking.")
                 Text("github.com/sputlab/nodewave", color = NodeCyan, fontFamily = Mono, fontSize = 11.sp)
@@ -201,6 +240,16 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
     }
 }
 
+/** The heading of a group of sections. */
+@Composable
+private fun GroupLabel(text: String) {
+    Text(text.uppercase(), color = NodeCyan, fontFamily = Sans, fontSize = 11.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Black, modifier = Modifier.padding(start = 4.dp, top = 8.dp))
+}
+
+private fun profile(name: String) = when (name) { "LOW_POWER" -> "save"; "LOW_LATENCY" -> "fast"; else -> "balanced" }
+private fun power(p: AdvertisePower) = when (p) { AdvertisePower.ULTRA_LOW -> "min"; AdvertisePower.LOW -> "low"; AdvertisePower.MEDIUM -> "mid"; AdvertisePower.HIGH -> "max" }
+private fun who(name: String) = when (name) { "OFF" -> "Nobody"; "VERIFIED" -> "Verified contacts"; else -> "Everyone" }
+
 /** The explanation under a setting. */
 @Composable
 private fun Note(text: String) {
@@ -208,8 +257,8 @@ private fun Note(text: String) {
 }
 
 @Composable
-private fun IdentityCard(state: SettingsUiState, onAction: (SettingsAction) -> Unit) {
-    TacticalCard(title = "Identity") {
+private fun ColumnScope.IdentityCard(state: SettingsUiState, onAction: (SettingsAction) -> Unit) {
+    run {
         val current = state.nodeName
         var draft by remember(current) { mutableStateOf(current) }
         val bytes = draft.toByteArray(Charsets.UTF_8).size
@@ -228,11 +277,11 @@ private fun IdentityCard(state: SettingsUiState, onAction: (SettingsAction) -> U
 }
 
 @Composable
-private fun MapCard(state: SettingsUiState, onAction: (SettingsAction) -> Unit, update: Update, onImport: () -> Unit) {
+private fun ColumnScope.MapCard(state: SettingsUiState, onAction: (SettingsAction) -> Unit, update: Update, onImport: () -> Unit) {
     val s = state.settings
     val dl = state.mapDownload
     val busy = dl?.running == true
-    TacticalCard(title = "Map") {
+    run {
         var link by remember { mutableStateOf("") }
         Text(if (s.mapArchive != null) "Map in use: ${s.mapArchive}" else "No offline map yet.", color = NwText, fontFamily = Sans, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         Note("Vector maps (Mapsforge, .map) are small and sharp at every zoom: one file covers a whole country. Download one here, import a file you already have, or use raster tiles (below).")
@@ -270,7 +319,7 @@ private fun MapCard(state: SettingsUiState, onAction: (SettingsAction) -> Unit, 
 }
 
 @Composable
-private fun FixedPosition(use: Boolean, fixed: GeoPosition?, own: GeoPosition?, onChange: (Boolean, GeoPosition?) -> Unit) {
+private fun ColumnScope.FixedPosition(use: Boolean, fixed: GeoPosition?, own: GeoPosition?, onChange: (Boolean, GeoPosition?) -> Unit) {
     var lat by remember(fixed) { mutableStateOf(fixed?.lat?.let { "%.6f".format(Locale.US, it) } ?: "") }
     var lon by remember(fixed) { mutableStateOf(fixed?.lon?.let { "%.6f".format(Locale.US, it) } ?: "") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -295,8 +344,8 @@ private fun parse(lat: String, lon: String, done: (GeoPosition?, String?) -> Uni
 }
 
 @Composable
-private fun LoraCard(lora: LoraSettings, usb: List<UsbDeviceInfo>, update: Update, onRefresh: () -> Unit) {
-    TacticalCard(title = "LoRa boards", actions = { Chip(if (usb.isEmpty()) "no board" else "${usb.size} usb", if (usb.isEmpty()) NwTextDim else NodeCyan) }) {
+private fun ColumnScope.LoraCard(lora: LoraSettings, usb: List<UsbDeviceInfo>, update: Update, onRefresh: () -> Unit) {
+    run {
         Note("Long-range boards (E22-900T22U, ESP32 LoRa) will connect through a USB OTG cable; Bluetooth boards later. These settings are saved now and applied when a board is connected.")
         if (usb.isEmpty()) Text("No USB device attached.", color = NwTextDim, fontFamily = Mono, fontSize = 11.sp)
         usb.forEach { d ->
@@ -327,12 +376,12 @@ private fun LoraCard(lora: LoraSettings, usb: List<UsbDeviceInfo>, update: Updat
 }
 
 @Composable
-private fun FastLinkCard(mode: FastLinkMode, update: Update) {
+private fun ColumnScope.FastLinkCard(mode: FastLinkMode, update: Update) {
     val context = LocalContext.current
     val needed = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, needed) == PackageManager.PERMISSION_GRANTED) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
-    TacticalCard(title = "Wi-Fi Direct") {
+    run {
         Note("Big transfers (photos) can move to a direct Wi-Fi link between two phones, much faster than Bluetooth. Bluetooth still finds people and sets it up; no one has to tap anything.")
         SectionLabel("Who may start one with you")
         Segmented(listOf(FastLinkMode.OFF to "Nobody", FastLinkMode.VERIFIED to "Verified", FastLinkMode.EVERYONE to "Everyone"), mode, { v ->

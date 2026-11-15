@@ -151,7 +151,7 @@ internal fun MapRoute(vm: MainViewModel, focusNodeId: String?, onFocusConsumed: 
 }
 
 @Composable
-internal fun DiagnosticsRoute(vm: MainViewModel, radioOn: Boolean) {
+internal fun DiagnosticsRoute(vm: MainViewModel, radioOn: Boolean, onBack: () -> Unit) {
     val logLines by vm.logLines.collectAsStateWithLifecycle()
     val ignoreDirect by vm.ignoreDirect.collectAsStateWithLifecycle()
     val stats by vm.stats.collectAsStateWithLifecycle()
@@ -166,6 +166,7 @@ internal fun DiagnosticsRoute(vm: MainViewModel, radioOn: Boolean) {
         DiagnosticsUiState(radioOn, logLines, ignoreDirect, stats, activity, nodes.filter { it.isDirect }, benchResults, benchBusy, benchRepeatPeer, fastLinkReport),
         onAction = { action ->
             when (action) {
+                DiagnosticsAction.Back -> onBack()
                 is DiagnosticsAction.SetIgnoreDirect -> vm.setIgnoreDirect(action.enabled)
                 is DiagnosticsAction.RunBench -> vm.runBench(action.peerId)
                 is DiagnosticsAction.SetBenchRepeat -> vm.setBenchRepeat(action.peerId)
@@ -177,7 +178,7 @@ internal fun DiagnosticsRoute(vm: MainViewModel, radioOn: Boolean) {
 }
 
 @Composable
-internal fun SettingsRoute(vm: MainViewModel, onClose: () -> Unit) {
+internal fun SettingsRoute(vm: MainViewModel, onDiagnostics: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -225,7 +226,7 @@ internal fun SettingsRoute(vm: MainViewModel, onClose: () -> Unit) {
                         .onFailure { mapNote = "Import failed: ${it.message}" }
                 }
                 SettingsAction.ClearHistory -> vm.clearHistory()
-                SettingsAction.Close -> onClose()
+                SettingsAction.OpenDiagnostics -> onDiagnostics()
             }
         }
     )
