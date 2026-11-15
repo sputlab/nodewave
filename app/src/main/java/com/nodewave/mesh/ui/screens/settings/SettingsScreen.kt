@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -110,6 +111,7 @@ sealed interface SettingsAction {
     data object ClearTiles : SettingsAction
     data object ClearHistory : SettingsAction
     data object OpenDiagnostics : SettingsAction
+    data object OpenDeviceReport : SettingsAction
 }
 
 private typealias Update = ((AppSettings) -> AppSettings) -> Unit
@@ -212,18 +214,8 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
         item { Section("Map", s.mapArchive ?: "No offline map") { MapCard(state, onAction, update) { importMap.launch(arrayOf("*/*")) } } }
 
         item { GroupLabel("System") }
-        item {
-            TacticalCard(onClick = { onAction(SettingsAction.OpenDiagnostics) }, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
-                Row(Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    NwGlyph(NwIcon.DIAGNOSTICS, NodeCyan, size = 22.dp)
-                    Column(Modifier.weight(1f)) {
-                        Text("DIAGNOSTICS", color = NwText, fontFamily = Sans, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
-                        Text("Radio console, activity, link test", color = NwTextDim, fontFamily = Mono, fontSize = 11.sp, maxLines = 1)
-                    }
-                    NwGlyph(NwIcon.CHEVRON_RIGHT, NwTextDim, size = 20.dp)
-                }
-            }
-        }
+        item { PageLink(NwIcon.DIAGNOSTICS, "Diagnostics", "Radio console, activity, link test") { onAction(SettingsAction.OpenDiagnostics) } }
+        item { PageLink(NwIcon.DEVICE, "Device report", "Help development: send this phone's specs") { onAction(SettingsAction.OpenDeviceReport) } }
         item {
             Section("About", "NodeWave ${state.appVersion}") {
                 val uri = LocalUriHandler.current
@@ -254,6 +246,21 @@ fun SettingsScreen(state: SettingsUiState, onAction: (SettingsAction) -> Unit, m
             confirmButton = { TacButton("Clear", { onAction(SettingsAction.ClearHistory); confirmClear = false }, kind = TacKind.DANGER, compact = true) },
             dismissButton = { TacButton("Cancel", { confirmClear = false }, kind = TacKind.SECONDARY, compact = true) }
         )
+    }
+}
+
+/** A row that opens a page of Settings: icon, name, what is inside, and a chevron. */
+@Composable
+private fun PageLink(icon: NwIcon, title: String, subtitle: String, onClick: () -> Unit) {
+    TacticalCard(onClick = onClick, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
+        Row(Modifier.heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            NwGlyph(icon, NodeCyan, size = 22.dp)
+            Column(Modifier.weight(1f)) {
+                Text(title.uppercase(), color = NwText, fontFamily = Sans, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                Text(subtitle, color = NwTextDim, fontFamily = Mono, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            NwGlyph(NwIcon.CHEVRON_RIGHT, NwTextDim, size = 20.dp)
+        }
     }
 }
 

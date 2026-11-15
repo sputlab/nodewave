@@ -5,6 +5,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versio
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-15
+
+A device report, to learn which phones NodeWave really runs on.
+
+### Added
+- **Device report** (Settings → Device report): a plain-text overview of the phone for the developers (brand, model, chipset, memory, screen, Android version and patch level, Bluetooth LE capabilities with the Bluetooth version they imply, Wi-Fi Direct and other hardware, granted permissions, battery optimisation, NodeWave version and radio state). The screen says plainly that it holds nothing personal, lists what it contains and what it never contains, and shows every word before anything is sent. Two ways to send it, chosen by the user: **Copy and open the web form** (copies the text and opens nodewave.org/deviceinfo.html, no email address needed) or **Send by email** (the phone's email app, subject "NodeWave Device Information Report", addressed to nodewave_device_info@sputlab.com).
+- The report can only hold the fields of a fixed list (`DeviceField`), pinned by a JVM test: adding one fails the test on purpose, so every new field gets a privacy review. Manufacturer strings are flattened to one short line.
+
 ## [0.14.0] - 2026-11-15
 
 A denser interface, and a tidier header and Settings.

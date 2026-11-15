@@ -4,7 +4,7 @@
 
 Off-Grid Mesh Communication System for Android. Phones talk to each other directly over **Bluetooth Low Energy**: no internet, no servers, no Google Play Services. 100% native Android APIs, ready for F-Droid.
 
-**Status: v0.14.0** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
+**Status: v0.15.0** - phones discover each other, exchange **end-to-end encrypted, forward-secret** chat messages with delivery confirmation over pure BLE, relay them across intermediate phones (multi-hop), keep the radio running with the screen off, and remember the conversation. See the [changelog](CHANGELOG.md).
 
 ## Screenshots
 
@@ -23,7 +23,7 @@ Off-Grid Mesh Communication System for Android. Phones talk to each other direct
 
 Taken on real phones talking over Bluetooth, with dummy names and a fixed position in the Dolomites for the map pictures (no real data). More in [docs/images/promo](docs/images/promo). Website: [nodewave.org](https://nodewave.org) (source in [sputlab/nodewave-website](https://github.com/sputlab/nodewave-website)).
 
-## Features (v0.14.0)
+## Features (v0.15.0)
 
 - Each node is at once a GATT server, advertiser, scanner and on-demand GATT client.
 - Identity key pair per install; the node ID is derived from the public key, so peers are recognised even when BLE addresses rotate and an ID cannot be claimed by someone without the key.
@@ -41,6 +41,7 @@ Taken on real phones talking over Bluetooth, with dummy names and a fixed positi
 - Free-text chat to a selected node or to all nodes, with delivery status (`sent` / `DELIVERED` / `FAILED`), plus the number of relays crossed.
 - **SOS**, **Ping all** and **Message to everyone** in an action bar visible in every section; per-node Ping and Chat buttons.
 - Tactical interface on a true-black background with a radar, a one-line header (node name and full ID, radio state with one icon per medium and a power button) and four tabs: Network, Comms, Map, Settings. A **compact display mode** (Settings → Display) fits more nodes and data on a screen. The `MESH_RADIO` log console is in Settings → Diagnostics.
+- **Device report** (Settings → Device report): the phone's model, Android version and radio capabilities, nothing personal, shown in full and sent only if you choose (web form without your email address, or your email app). It helps match problems to hardware.
 
 ## Requirements
 

@@ -141,8 +141,8 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         vm.startPositionTracking() // does nothing unless the user granted location
         onPauseOrDispose { vm.stopPositionTracking() }
     }
-    // Diagnostics is a page of Settings: back returns there
-    BackHandler(enabled = destination == Destination.DIAGNOSTICS) { go(Destination.SETTINGS) }
+    // Diagnostics and the device report are pages of Settings: back returns there
+    BackHandler(enabled = !destination.inTabBar) { go(Destination.SETTINGS) }
 
     val media = remember(settings.fastLinkMode, radioOn) {
         listOf(
@@ -176,7 +176,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                     }
                     NodeWaveTabBar(
                         Destination.tabs.map { TabItem(it.label, it.icon, badge = if (it == Destination.COMMS) unread else 0) },
-                        selected = Destination.tabs.indexOf(if (destination == Destination.DIAGNOSTICS) Destination.SETTINGS else destination),
+                        selected = Destination.tabs.indexOf(destination.tab),
                         onSelect = { go(Destination.tabs[it]) }
                     )
                 }
@@ -193,7 +193,8 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                         Destination.COMMS -> CommsRoute(vm, radioOn, chatKey, onOpen = { chatKey = it })
                         Destination.MAP -> MapRoute(vm, mapFocus, onFocusConsumed = { mapFocus = null })
                         Destination.DIAGNOSTICS -> DiagnosticsRoute(vm, radioOn, onBack = { go(Destination.SETTINGS) })
-                        Destination.SETTINGS -> SettingsRoute(vm, onDiagnostics = { go(Destination.DIAGNOSTICS) })
+                        Destination.DEVICE_REPORT -> DeviceReportRoute(vm, onBack = { go(Destination.SETTINGS) })
+                        Destination.SETTINGS -> SettingsRoute(vm, onDiagnostics = { go(Destination.DIAGNOSTICS) }, onDeviceReport = { go(Destination.DEVICE_REPORT) })
                     }
                 }
             }

@@ -19,7 +19,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /** The app's icons, drawn here so no icon library is needed. */
-enum class NwIcon { NETWORK, COMMS, MAP, DIAGNOSTICS, GEAR, BLUETOOTH, WIFI, LORA, POWER, PING, CHEVRON_DOWN, CHEVRON_RIGHT }
+enum class NwIcon { NETWORK, COMMS, MAP, DIAGNOSTICS, GEAR, BLUETOOTH, WIFI, LORA, POWER, PING, DEVICE, CHEVRON_DOWN, CHEVRON_RIGHT }
 
 @Composable
 fun NwGlyph(icon: NwIcon, color: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
@@ -85,6 +85,13 @@ fun NwGlyph(icon: NwIcon, color: Color, modifier: Modifier = Modifier, size: Dp 
                     drawArc(color, -50f, 100f, false, Offset(center.x - w * r, center.y - w * r), Size(w * r * 2, w * r * 2), style = st)
                     drawArc(color, 130f, 100f, false, Offset(center.x - w * r, center.y - w * r), Size(w * r * 2, w * r * 2), style = st)
                 }
+            }
+            NwIcon.DEVICE -> {
+                // a phone with an "i" on its screen: the facts about this handset
+                drawRoundRect(color, Offset(w * .24f, h * .08f), Size(w * .52f, h * .84f), CornerRadius(w * .1f), style = st)
+                drawLine(color, Offset(w * .44f, h * .8f), Offset(w * .56f, h * .8f), line, StrokeCap.Round)
+                drawCircle(color, line * .8f, Offset(w * .5f, h * .3f))
+                drawLine(color, Offset(w * .5f, h * .42f), Offset(w * .5f, h * .62f), line, StrokeCap.Round)
             }
             NwIcon.CHEVRON_DOWN -> drawPath(Path().apply { moveTo(w * .26f, h * .38f); lineTo(w * .5f, h * .62f); lineTo(w * .74f, h * .38f) }, color, style = st)
             NwIcon.CHEVRON_RIGHT -> drawPath(Path().apply { moveTo(w * .38f, h * .26f); lineTo(w * .62f, h * .5f); lineTo(w * .38f, h * .74f) }, color, style = st)

@@ -231,6 +231,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * The device report shown in Settings: the phone's facts plus four NodeWave lines (radio state, how many nodes,
+     * two settings). No name, ID or key of this node or of any other goes into it.
+     */
+    fun deviceReport(): com.nodewave.mesh.protocol.DeviceReport {
+        val nodes = this.nodes.value
+        val s = settings.value
+        return com.nodewave.mesh.data.DeviceInfo.report(
+            getApplication(), mapOf(
+                com.nodewave.mesh.protocol.DeviceField.RADIO_STATE to transportState.value.name.lowercase().replace('_', ' '),
+                com.nodewave.mesh.protocol.DeviceField.NODES_IN_REACH to "${nodes.size} (${nodes.count { it.isDirect }} direct, ${nodes.count { !it.isDirect }} relayed)",
+                com.nodewave.mesh.protocol.DeviceField.FAST_LINK_MODE to s.fastLinkMode.name.lowercase(),
+                com.nodewave.mesh.protocol.DeviceField.DISPLAY_MODE to s.uiDensity.name.lowercase()
+            )
+        )
+    }
+
     /** The build number (versionCode) of the installed app. */
     fun appBuild(): String = getApplication<Application>().let {
         runCatching { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it.packageManager.getPackageInfo(it.packageName, 0)).toString() }.getOrNull() ?: "?"

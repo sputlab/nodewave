@@ -20,7 +20,12 @@ enum class Destination(
     MAP("Map", NwIcon.MAP),
     SETTINGS("Settings", NwIcon.GEAR, showsActionBar = false),
     /** Opened from Settings: technical tools nobody needs while operating. */
-    DIAGNOSTICS("Diagnostics", NwIcon.DIAGNOSTICS, inTabBar = false, showsActionBar = false);
+    DIAGNOSTICS("Diagnostics", NwIcon.DIAGNOSTICS, inTabBar = false, showsActionBar = false),
+    /** Opened from Settings: the phone's specs, shown in full before the user chooses to send them. */
+    DEVICE_REPORT("Device report", NwIcon.DEVICE, inTabBar = false, showsActionBar = false);
+
+    /** The tab that stays lit while this page is open. */
+    val tab: Destination get() = if (inTabBar) this else SETTINGS
 
     companion object {
         val tabs: List<Destination> = entries.filter { it.inTabBar }

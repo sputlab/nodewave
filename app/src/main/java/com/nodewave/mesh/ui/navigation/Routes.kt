@@ -3,6 +3,7 @@ package com.nodewave.mesh.ui.navigation
 
 import android.provider.OpenableColumns
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -35,6 +36,11 @@ import com.nodewave.mesh.ui.screens.settings.SettingsAction
 import com.nodewave.mesh.ui.screens.settings.SettingsScreen
 import com.nodewave.mesh.ui.screens.settings.SettingsUiState
 import com.nodewave.mesh.ui.screens.settings.UsbDeviceInfo
+import com.nodewave.mesh.protocol.DeviceReport
+import com.nodewave.mesh.transport.MeshLog
+import com.nodewave.mesh.ui.screens.report.DeviceReportAction
+import com.nodewave.mesh.ui.screens.report.DeviceReportScreen
+import com.nodewave.mesh.ui.screens.report.DeviceReportUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -180,7 +186,7 @@ internal fun DiagnosticsRoute(vm: MainViewModel, radioOn: Boolean, onBack: () ->
 }
 
 @Composable
-internal fun SettingsRoute(vm: MainViewModel, onDiagnostics: () -> Unit) {
+internal fun SettingsRoute(vm: MainViewModel, onDiagnostics: () -> Unit, onDeviceReport: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -230,6 +236,53 @@ internal fun SettingsRoute(vm: MainViewModel, onDiagnostics: () -> Unit) {
                 }
                 SettingsAction.ClearHistory -> vm.clearHistory()
                 SettingsAction.OpenDiagnostics -> onDiagnostics()
+                SettingsAction.OpenDeviceReport -> onDeviceReport()
+            }
+        }
+    )
+}
+
+@Composable
+internal fun DeviceReportRoute(vm: MainViewModel, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var text by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    fun read() = scope.launch { text = null; text = withContext(Dispatchers.Default) { vm.deviceReport().text } }
+    LaunchedEffect(Unit) { read() }
+
+    DeviceReportScreen(
+        DeviceReportUiState(text, notice),
+        onAction = { action ->
+            val report = text
+            when (action) {
+                DeviceReportAction.Back -> onBack()
+                DeviceReportAction.Refresh -> { notice = null; read() }
+                DeviceReportAction.CopyAndOpenForm -> if (report != null) {
+                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText(DeviceReport.TITLE, report))
+                    MeshLog.d("Device report copied, opening the web form")
+                    notice = try {
+                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(DeviceReport.FORM_URL)))
+                        "Copied. In the page that opened, paste the report into the box and press Send."
+                    } catch (e: android.content.ActivityNotFoundException) {
+                        "Copied, but no browser is installed. Open ${DeviceReport.FORM_URL} on any device and paste it there."
+                    }
+                }
+                DeviceReportAction.SendEmail -> if (report != null) {
+                    // the address, subject and body go both in the mailto: URI and in the extras: mail apps read one or the other
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO, android.net.Uri.parse(DeviceReport.mailto(DeviceReport.ADDRESS, DeviceReport.TITLE, report)))
+                        .putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf(DeviceReport.ADDRESS))
+                        .putExtra(android.content.Intent.EXTRA_SUBJECT, DeviceReport.TITLE)
+                        .putExtra(android.content.Intent.EXTRA_TEXT, report)
+                    MeshLog.d("Device report: opening the email app")
+                    notice = try {
+                        context.startActivity(intent)
+                        "Your email app has the report ready: check it and press send there."
+                    } catch (e: android.content.ActivityNotFoundException) {
+                        "No email app on this phone. Use \"Copy and open the web form\" instead."
+                    }
+                }
             }
         }
     )
